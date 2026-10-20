@@ -37,6 +37,17 @@ import type { Stats } from "./api";
 import { Badge, Button, ErrorBox, IconButton } from "./components";
 import type { Notice } from "./components";
 
+// Chart colours mirror the .series-* legend classes in style.css.
+const CHART = {
+  primary: "#e04c8b",
+  soft: "#ff9cc2",
+  honey: "#e9a512",
+  lilac: "#9b7be6",
+  grid: "#fbe1ec",
+  tick: "#8f6378",
+  ink: "#4a2a3d",
+} as const;
+
 function beginning(daysAgo: number) {
   const date = new Date();
   date.setUTCDate(date.getUTCDate() - daysAgo);
@@ -241,7 +252,7 @@ export function Dashboard({
             <span>tokens</span>
           </div>
           <div className="metric-bottom">
-            <span className="legend-dot emerald" />
+            <span className="legend-dot series-primary" />
             <span title={number(summary.input_tokens)}>
               输入 {tokenCount(summary.input_tokens)}
             </span>
@@ -261,7 +272,7 @@ export function Dashboard({
             <span>次</span>
           </div>
           <div className="metric-bottom">
-            <span className="legend-dot blue" />
+            <span className="legend-dot series-honey" />
             {stats.accounts.total} 个账号
             <span className="metric-separator" />
             {stats.keys} 个密钥
@@ -290,7 +301,7 @@ export function Dashboard({
             <span>ms</span>
           </div>
           <div className="metric-bottom">
-            <span className="legend-dot amber" />
+            <span className="legend-dot series-lilac" />
             端到端请求耗时
           </div>
         </div>
@@ -370,26 +381,26 @@ export function Dashboard({
             {metric === "tokens" ? (
               <>
                 <span>
-                  <i className="emerald" />
+                  <i className="series-primary" />
                   未缓存输入
                 </span>
                 <span>
-                  <i className="mint" />
+                  <i className="series-soft" />
                   缓存输入
                 </span>
                 <span>
-                  <i className="blue" />
+                  <i className="series-honey" />
                   输出
                 </span>
               </>
             ) : (
               <>
                 <span>
-                  <i className="emerald" />
+                  <i className="series-primary" />
                   总请求
                 </span>
                 <span>
-                  <i className="amber" />
+                  <i className="series-lilac" />
                   Cyber 事件
                 </span>
               </>
@@ -401,14 +412,22 @@ export function Dashboard({
                 data={chartData}
                 margin={{ top: 10, right: 12, bottom: 0, left: -15 }}
               >
+                <defs>
+                  {(["primary", "soft", "honey", "lilac"] as const).map((tone) => (
+                    <linearGradient key={tone} id={`zako-fill-${tone}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={CHART[tone]} stopOpacity={0.32} />
+                      <stop offset="100%" stopColor={CHART[tone]} stopOpacity={0.02} />
+                    </linearGradient>
+                  ))}
+                </defs>
                 <CartesianGrid
-                  stroke="#e9edec"
-                  strokeDasharray="3 4"
+                  stroke={CHART.grid}
+                  strokeDasharray="4 6"
                   vertical={false}
                 />
                 <XAxis
                   dataKey="date"
-                  tick={{ fontSize: 11, fill: "#929a97" }}
+                  tick={{ fontSize: 11, fill: CHART.tick }}
                   axisLine={false}
                   tickLine={false}
                   minTickGap={25}
@@ -416,7 +435,7 @@ export function Dashboard({
                 />
                 <YAxis
                   tickFormatter={metric === "tokens" ? tokenCount : compactCount}
-                  tick={{ fontSize: 11, fill: "#929a97" }}
+                  tick={{ fontSize: 11, fill: CHART.tick }}
                   axisLine={false}
                   tickLine={false}
                   allowDecimals={false}
@@ -424,12 +443,14 @@ export function Dashboard({
                   domain={[0, "auto"]}
                 />
                 <Tooltip
+                  cursor={{ stroke: CHART.soft, strokeDasharray: "4 4" }}
                   contentStyle={{
-                    borderRadius: 6,
-                    border: "1px solid #e5e9e7",
+                    borderRadius: 16,
+                    border: `1.5px solid ${CHART.grid}`,
                     fontSize: 12,
-                    boxShadow: "0 4px 16px #1b35200d",
+                    boxShadow: "0 12px 28px -12px rgb(214 55 122 / 35%)",
                   }}
+                  itemStyle={{ color: CHART.ink }}
                   formatter={(value) =>
                     metric === "tokens" ? (
                       <span title={number(Number(value || 0))}>
@@ -439,7 +460,7 @@ export function Dashboard({
                       compactCount(Number(value || 0))
                     )
                   }
-                  labelStyle={{ color: "#65716c", marginBottom: 7 }}
+                  labelStyle={{ color: CHART.tick, fontWeight: 700, marginBottom: 7 }}
                 />
                 {metric === "tokens" ? (
                   <>
@@ -449,9 +470,9 @@ export function Dashboard({
                       stackId="tokens"
                       dataKey="uncached"
                       name="未缓存输入"
-                      stroke="#198469"
-                      fill="#198469"
-                      fillOpacity={0.12}
+                      stroke={CHART.primary}
+                      fill="url(#zako-fill-primary)"
+                      fillOpacity={1}
                       strokeWidth={2}
                     />
                     <Area
@@ -460,9 +481,9 @@ export function Dashboard({
                       stackId="tokens"
                       dataKey="cached"
                       name="缓存输入"
-                      stroke="#73b8a1"
-                      fill="#73b8a1"
-                      fillOpacity={0.15}
+                      stroke={CHART.soft}
+                      fill="url(#zako-fill-soft)"
+                      fillOpacity={1}
                       strokeWidth={1.5}
                     />
                     <Area
@@ -471,9 +492,9 @@ export function Dashboard({
                       stackId="tokens"
                       dataKey="output"
                       name="输出"
-                      stroke="#6e9ac2"
-                      fill="#6e9ac2"
-                      fillOpacity={0.1}
+                      stroke={CHART.honey}
+                      fill="url(#zako-fill-honey)"
+                      fillOpacity={1}
                       strokeWidth={1.5}
                     />
                   </>
@@ -484,9 +505,9 @@ export function Dashboard({
                       type="monotone"
                       dataKey="requests"
                       name="总请求"
-                      stroke="#198469"
-                      fill="#198469"
-                      fillOpacity={0.1}
+                      stroke={CHART.primary}
+                      fill="url(#zako-fill-primary)"
+                      fillOpacity={1}
                       strokeWidth={2}
                     />
                     <Area
@@ -494,9 +515,9 @@ export function Dashboard({
                       type="monotone"
                       dataKey="cyber"
                       name="Cyber 事件"
-                      stroke="#b7934d"
-                      fill="#b7934d"
-                      fillOpacity={0.08}
+                      stroke={CHART.lilac}
+                      fill="url(#zako-fill-lilac)"
+                      fillOpacity={1}
                       strokeWidth={1.5}
                     />
                   </>
@@ -532,15 +553,15 @@ export function Dashboard({
             {summary.total_tokens > 0 ? (
               <>
                 <i
-                  className="emerald"
+                  className="series-primary"
                   style={{ flexGrow: Math.max(0, summary.uncached_tokens) }}
                 />
                 <i
-                  className="mint"
+                  className="series-soft"
                   style={{ flexGrow: summary.cached_tokens }}
                 />
                 <i
-                  className="blue"
+                  className="series-honey"
                   style={{ flexGrow: summary.output_tokens }}
                 />
               </>
@@ -550,7 +571,7 @@ export function Dashboard({
           </div>
           <div className="distribution-row">
             <span>
-              <i className="legend-dot emerald" />
+              <i className="legend-dot series-primary" />
               未缓存输入
             </span>
             <strong title={number(summary.uncached_tokens)}>
@@ -559,7 +580,7 @@ export function Dashboard({
           </div>
           <div className="distribution-row">
             <span>
-              <i className="legend-dot mint" />
+              <i className="legend-dot series-soft" />
               缓存输入
             </span>
             <strong title={number(summary.cached_tokens)}>
@@ -568,7 +589,7 @@ export function Dashboard({
           </div>
           <div className="distribution-row">
             <span>
-              <i className="legend-dot blue" />
+              <i className="legend-dot series-honey" />
               输出 Token
             </span>
             <strong title={number(summary.output_tokens)}>

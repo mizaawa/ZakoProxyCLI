@@ -5,12 +5,12 @@ import {
   Check,
   ChevronDown,
   Copy,
-  Inbox,
   LoaderCircle,
   Search,
   X,
 } from "lucide-react";
 import { copy, errorMessage } from "./api";
+import { Mascot } from "./Mascot";
 
 export type Notice = (text: string, error?: boolean) => void;
 
@@ -112,7 +112,7 @@ export function Empty({
   return (
     <div className="empty">
       <div className="empty-icon">
-        <Inbox size={24} strokeWidth={1.5} />
+        <Mascot size={58} />
       </div>
       <strong>{title}</strong>
       {detail && <p>{detail}</p>}

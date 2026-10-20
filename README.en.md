@@ -82,6 +82,10 @@ Images retain ghcr.io/mizaawa/zakoai-proxy-cli for existing deployments. v0.6.0 
 
 For example, the account configuration fragment `{"models":["gpt-6-astra"],"model_mappings":{"chat-main":"gpt-6-astra"}}` accepts a client request for `chat-main` and sends `model: "gpt-6-astra"` upstream. Selecting the group's `gpt-6-astra` strategy applies that actual model's profile, not a profile for the alias. An unmapped request for `gpt-6-astra` still uses that same actual model. These mapping and profile matching rules apply to every supported protocol.
 
+### v0.10.0 Sakura Pudding Theme
+
+The console has been redesigned in an anime-inspired "Sakura Pudding" theme: sakura pink, warm honey yellow and cream white, with larger corner radii on cards, buttons, inputs and dialogs. The sidebar and top bar now float as cards, settings and request logs use card layouts, charts use soft gradient fills, and a small "Zako-chan" fish illustration appears on the sign-in page and in empty states. Latin UI text now uses Nunito (OFL-1.1, bundled locally with the frontend) instead of Inter; Chinese text keeps the system fonts. This release only changes the frontend appearance; APIs, data and deployment are unchanged and no upgrade steps are required.
+
 ### v0.9.0 Turnstile Security and Log Statistics Improvements
 
 System settings can configure Cloudflare Turnstile site and secret keys for login challenges; the secret is encrypted at rest and never returned by the API. The request-log paginator now supports keyboard navigation and touch-friendly controls, dashboard counts use compact formatting for large values, and coverage includes Cyber statistics beyond one thousand events.

@@ -2,9 +2,9 @@
   flex-shrink: 0;
   min-width: 0;
   min-height: 44px;
-  background: #edf5f7;
-  border-bottom: 1px solid #dbe9ed;
-  color: #386677;
+  background: linear-gradient(90deg, var(--honey-100) 0%, #fff4f8 50%, var(--pink-100) 100%);
+  border-bottom: 1.5px solid #fff;
+  color: var(--ink-soft);
 }
 
 .promo-banner > a {
@@ -14,7 +14,8 @@
   gap: 20px;
   min-height: 44px;
   padding: 8px 24px;
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1.5;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
@@ -29,29 +30,36 @@
   flex-shrink: 0;
 }
 
+.promo-banner .promo-brand > svg {
+  color: var(--pink-500);
+}
+
 .promo-banner strong {
-  font-size: 12px;
-  font-weight: 600;
-  color: #28566a;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--pink-700);
 }
 
 .promo-banner .promo-label {
-  border-left: 1px solid #cbdfe6;
-  padding-left: 7px;
-  font-size: 9px;
-  color: #71909b;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--honey-700);
 }
 
 .promo-banner .promo-description {
-  color: #66838d;
+  color: var(--ink-soft);
 }
 
 .promo-banner .promo-destination {
-  font-weight: 500;
+  font-weight: 800;
+  color: var(--pink-700);
 }
 
 .promo-banner > a:active {
-  background: #deedf2;
+  background: rgb(255 255 255 / 45%);
 }
 
 .workspace > .promo-banner,
@@ -74,7 +82,7 @@
 
 @media (hover: hover) and (pointer: fine) {
   .promo-banner > a:hover {
-    background: #e3f0f4;
+    background: rgb(255 255 255 / 35%);
   }
 }
 
@@ -100,7 +108,7 @@
 
   .workspace > .topbar {
     top: calc(44px + env(safe-area-inset-top, 0px));
-    height: 59px;
+    height: 60px;
     padding-top: 0;
   }
 }

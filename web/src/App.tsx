@@ -5,11 +5,11 @@ import {
   ArrowRight,
   ChevronRight,
   CircleHelp,
-  Command,
   Database,
   Eye,
   EyeOff,
   FileClock,
+  Fish,
   FolderClosed,
   KeyRound,
   LayoutDashboard,
@@ -29,6 +29,7 @@ import { RequestLogs } from "./RequestLogs";
 import { GroupsPage, AccountsPage, KeysPage } from "./Management";
 import { SettingsPage } from "./Settings";
 import { PromoBanner } from "./PromoBanner";
+import { Mascot } from "./Mascot";
 import { useUpdateCheck } from "./useUpdateCheck";
 import { version } from "../package.json";
 
@@ -51,11 +52,11 @@ const navigation = [
 ] as const;
 type Page = (typeof navigation)[number]["id"];
 
-function Brand({ dark = false }: { dark?: boolean }) {
+function Brand() {
   return (
-    <div className={`brand ${dark ? "brand-dark" : ""}`}>
+    <div className="brand">
       <span className="brand-mark">
-        <Command size={24} strokeWidth={2.3} />
+        <Fish size={23} strokeWidth={2.3} aria-hidden="true" />
       </span>
       <span className="brand-word">
         ZAKO<span>API RELAY</span>
@@ -147,7 +148,7 @@ function Authentication({
       </header>
       <main className="auth-main">
         <div className="auth-symbol">
-          <ShieldCheck size={28} strokeWidth={1.6} />
+          <Mascot size={64} />
         </div>
         <div className="auth-heading">
           <span className="eyebrow">ZAKO CONSOLE</span>
@@ -386,7 +387,7 @@ export default function App() {
       />
       <aside className={`sidebar ${mobileNav ? "nav-open" : ""}`}>
         <div className="sidebar-brand">
-          <Brand dark />
+          <Brand />
           <IconButton
             title="关闭导航"
             className="mobile-nav-close"
