@@ -521,6 +521,9 @@ async fn upstream(State(mock): State<Arc<Mock>>, req: Request<Body>) -> Response
     };
     if path == "/api/user/login" {
         if body["username"] != "new-user" || body["password"] != "new-password-secret" {
+            if body["username"] == "new-user-v2" && body["password"] == "new-password-secret" {
+                return Json(json!({"success":true,"data":{"access_token":"new-login-access-secret","token_type":"Bearer","user":{"id":42}}})).into_response();
+            }
             return Json(json!({"success":false,"message":"invalid login"})).into_response();
         }
         let mut response = Json(json!({"success":true,"data":{"id":42}})).into_response();
@@ -542,8 +545,14 @@ async fn upstream(State(mock): State<Arc<Mock>>, req: Request<Body>) -> Response
         }
         let valid_cookie = header("cookie").contains("session=upstream-cookie-secret")
             && header("cookie").contains("device=upstream-device");
-        if header("new-api-user") != "42"
-            || !(valid_cookie || header("authorization") == "Bearer system-token-secret")
+        let modern_auth = header("new-api-user").is_empty()
+            && matches!(
+                header("authorization"),
+                "Bearer nap_system-token-secret" | "Bearer new-login-access-secret"
+            );
+        if !modern_auth
+            && (header("new-api-user") != "42"
+                || !(valid_cookie || header("authorization") == "Bearer system-token-secret"))
         {
             return Json(json!({"success":false,"message":"invalid session"})).into_response();
         }
@@ -918,6 +927,38 @@ async fn newapi_system_token_test_is_authenticated_and_does_not_persist() {
     let me = calls.iter().find(|c| c.path == "/api/user/self").unwrap();
     assert_eq!(me.headers["authorization"], "Bearer system-token-secret");
     assert_eq!(me.headers["new-api-user"], "42");
+}
+
+#[tokio::test]
+async fn newapi_pat_without_user_id_and_modern_password_login_keep_legacy_path() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server().await;
+    let mut pat = form(&url, "newapi", "token");
+    pat["user_id"] = json!("");
+    pat["access_token"] = json!("nap_system-token-secret");
+    let (status, tested, _) =
+        request(&state, "POST", "/api/providers/test", pat.clone(), &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{tested}");
+    assert_eq!(tested["user_id"], "42");
+    let provider = create_and_refresh(&state, pat, &cookie).await;
+    assert_eq!(provider["status"], "connected");
+    assert_eq!(provider["user_id"], "42");
+
+    let mut password = form(&url, "newapi", "password");
+    password["username"] = json!("new-user-v2");
+    password["password"] = json!("new-password-secret");
+    let modern = create_and_refresh(&state, password, &cookie).await;
+    assert_eq!(modern["status"], "connected");
+    assert_eq!(modern["user_id"], "42");
+
+    let calls = mock.calls.lock().unwrap();
+    assert!(calls.iter().any(|call| call.path == "/api/user/self"
+        && call.headers.get("authorization").unwrap() == "Bearer nap_system-token-secret"
+        && !call.headers.contains_key("new-api-user")));
+    assert!(calls.iter().any(|call| call.path == "/api/user/self"
+        && call.headers.get("authorization").unwrap() == "Bearer new-login-access-secret"
+        && !call.headers.contains_key("new-api-user")));
 }
 
 #[tokio::test]

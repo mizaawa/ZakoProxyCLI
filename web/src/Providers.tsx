@@ -82,7 +82,7 @@ function loadProviderTurnstile() {
 
 function hasCredentials(provider: Provider) {
   if (provider.auth_mode === "password") return Boolean(provider.username.trim() && provider.has_password);
-  return Boolean(provider.has_access_token || (provider.kind === "sub2api" && provider.has_refresh_token)) && (provider.kind !== "newapi" || Boolean(provider.user_id.trim()));
+  return Boolean(provider.has_access_token || (provider.kind === "sub2api" && provider.has_refresh_token));
 }
 
 const platformFilters = [
@@ -263,7 +263,7 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       if (!values.username.trim()) throw new Error(values.kind === "sub2api" ? "请填写登录邮箱" : "请填写登录账号");
       if (!values.password && !(canReuse && provider?.has_password)) throw new Error("请填写登录密码");
     } else {
-      if (values.kind === "newapi" && !values.user_id.trim()) throw new Error("请填写 New API 用户 ID");
+      if (values.kind === "newapi" && values.access_token.trim() && !values.access_token.trim().startsWith("nap_") && !values.user_id.trim()) throw new Error("旧版 New API 令牌需要用户 ID；新版 nap_ 令牌可留空");
       if (!values.access_token.trim() && !(canReuse && provider?.has_access_token) && !(values.kind === "sub2api" && (values.refresh_token.trim() || (canReuse && provider?.has_refresh_token)))) throw new Error("请填写访问令牌");
     }
   }
@@ -321,7 +321,7 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
       {values.auth_mode === "password" ? <div className="form-grid provider-form-grid"><Field label={values.kind === "sub2api" ? "登录邮箱" : "登录账号"}><input value={values.username} onChange={(event) => update("username", event.target.value)} placeholder={values.kind === "sub2api" ? "name@example.com" : "请输入站点登录账号"} required disabled={Boolean(busy)} autoComplete="username" /></Field><Field label="登录密码" hint={canReuse && provider?.has_password ? "留空保留已保存的密码" : undefined}><SecretInput value={values.password} onChange={(value) => update("password", value)} placeholder={canReuse && provider?.has_password ? "已保存，留空保持不变" : "请输入登录密码"} required={!(canReuse && provider?.has_password)} disabled={Boolean(busy)} /></Field></div> : values.kind === "sub2api" ? <>
         <Field label="Access Token" hint="使用站点的登录访问令牌；也可仅填写 Refresh Token。"><SecretInput value={values.access_token} onChange={(value) => update("access_token", value)} placeholder={canReuse && provider?.has_access_token ? "已保存，留空保持不变" : "粘贴 Access Token"} disabled={Boolean(busy)} /></Field>
         <div className="form-grid provider-form-grid"><Field label="Refresh Token" optional hint={canReuse && provider?.has_refresh_token ? "留空保留已保存的刷新令牌" : "用于访问令牌过期后刷新登录"}><SecretInput value={values.refresh_token} onChange={(value) => update("refresh_token", value)} placeholder={canReuse && provider?.has_refresh_token ? "已保存，留空保持不变" : "粘贴 Refresh Token"} disabled={Boolean(busy)} /></Field><Field label="Token Type"><input value={values.token_type} onChange={(event) => update("token_type", event.target.value)} placeholder="Bearer" disabled={Boolean(busy)} /></Field></div>
-      </> : <div className="form-grid provider-form-grid"><Field label="用户 ID" hint="在 New API 个人设置中查看。"><input value={values.user_id} onChange={(event) => update("user_id", event.target.value)} placeholder="例如：123" required disabled={Boolean(busy)} inputMode="numeric" /></Field><Field label="系统访问令牌" hint="在个人设置中生成，不是 sk- 开头的模型 API Key。"><SecretInput value={values.access_token} onChange={(value) => update("access_token", value)} placeholder={canReuse && provider?.has_access_token ? "已保存，留空保持不变" : "粘贴系统访问令牌"} required={!(canReuse && provider?.has_access_token)} disabled={Boolean(busy)} /></Field></div>}
+      </> : <div className="form-grid provider-form-grid"><Field label="用户 ID" optional hint="新版 nap_ 令牌可留空；旧版系统令牌仍需填写。"><input value={values.user_id} onChange={(event) => update("user_id", event.target.value)} placeholder="旧版站点填写，例如：123" disabled={Boolean(busy)} inputMode="numeric" /></Field><Field label="系统访问令牌" hint="新版请使用 nap_ 令牌，需授权 profile:read、usage:read；导入密钥另需 api_key:read、api_key:reveal，创建密钥需 api_key:write。旧版令牌仍可使用。"><SecretInput value={values.access_token} onChange={(value) => update("access_token", value)} placeholder={canReuse && provider?.has_access_token ? "已保存，留空保持不变" : "粘贴系统访问令牌"} required={!(canReuse && provider?.has_access_token)} disabled={Boolean(busy)} /></Field></div>}
       <div className="form-divider" />
       <div className="form-grid provider-form-grid"><Field label="充值倍率" hint="人民币展示金额 = 美元金额 × 充值倍率。"><input type="number" value={values.price_multiplier} onChange={(event) => update("price_multiplier", event.target.value)} min="0.000001" step="any" required disabled={Boolean(busy)} /></Field><Field label="备注" optional><input value={values.notes} onChange={(event) => update("notes", event.target.value)} placeholder="用于区分站点或记录说明" maxLength={500} disabled={Boolean(busy)} /></Field></div>
       {identityChanges.length > 0 && <p className="provider-form-note"><AlertCircle size={15} /><span>已更换{identityChanges.join("、")}，{hasNewCredentials ? "保存时将验证新凭据。" : `原凭据不会复用，请填写新的${values.auth_mode === "password" ? "登录密码" : values.kind === "sub2api" ? "访问令牌或刷新令牌" : "系统访问令牌"}。`}</span></p>}

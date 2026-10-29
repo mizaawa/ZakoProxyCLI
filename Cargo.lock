@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "zakoai-proxy"
-version = "0.13.1"
+version = "0.13.2"
 dependencies = [
  "aes-gcm",
  "argon2",

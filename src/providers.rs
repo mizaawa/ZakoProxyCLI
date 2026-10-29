@@ -345,12 +345,17 @@ fn build(s: &Shared, input: Input, existing: Option<&Provider>) -> Result<Provid
         if p.access_token.is_empty() && !(p.kind == "sub2api" && !p.refresh_token.is_empty()) {
             return Err(bad("请输入站点访问令牌；Sub2API 也可仅使用 Refresh Token"));
         }
-        if p.kind == "newapi"
-            && (p.user_id.is_empty()
-                || !p.user_id.bytes().all(|c| c.is_ascii_digit())
-                || p.user_id.parse::<u64>().unwrap_or(0) == 0)
-        {
-            return Err(bad("NewAPI 令牌认证需要有效的用户 ID"));
+        if p.kind == "newapi" {
+            let access = decrypt(s, &p.access_token).map_err(|error| bad(&error.message))?;
+            if !access.starts_with("nap_")
+                && (p.user_id.is_empty()
+                    || !p.user_id.bytes().all(|c| c.is_ascii_digit())
+                    || p.user_id.parse::<u64>().unwrap_or(0) == 0)
+            {
+                return Err(bad(
+                    "旧版 NewAPI 令牌认证需要有效的用户 ID；新版 nap_ 令牌可留空",
+                ));
+            }
         }
         if p.kind == "newapi" {
             p.refresh_token.clear();
@@ -628,8 +633,33 @@ pub(crate) async fn request(
         })?;
     let status = response.status();
     if !status.is_success() {
+        let pat_scope = if status == StatusCode::FORBIDDEN
+            && p.kind == "newapi"
+            && p.auth_mode == "token"
+            && decrypt(s, &p.access_token).is_ok_and(|token| token.starts_with("nap_"))
+        {
+            if path.starts_with("/api/token/") {
+                Some(if path.ends_with("/key") {
+                    "api_key:reveal"
+                } else if path.starts_with("/api/token/?") {
+                    "api_key:read"
+                } else {
+                    "api_key:write"
+                })
+            } else if path == "/api/log/self/stat" {
+                Some("usage:read")
+            } else if path == "/api/user/self" {
+                Some("profile:read")
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         return Err(RemoteError {
-            message: if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+            message: if let Some(scope) = pat_scope {
+                format!("New API 令牌缺少 {scope} 权限（{path}）")
+            } else if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
                 "站点认证失败，请检查登录信息或更新令牌".into()
             } else {
                 format!("站点返回 HTTP {}（{path}）", status.as_u16())
@@ -897,7 +927,10 @@ async fn fetch_sub(
     }
 }
 
-async fn fetch_new(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError> {
+pub(crate) async fn new_auth_headers(
+    s: &Shared,
+    p: &mut Provider,
+) -> Result<HeaderMap, RemoteError> {
     let mut headers = HeaderMap::new();
     if p.auth_mode == "password" {
         let password = decrypt(s, &p.password)?;
@@ -909,29 +942,45 @@ async fn fetch_new(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError>
             Some(json!({"username":p.username,"password":password})),
         )
         .await?;
-        p.user_id = text(&login.data, &["id", "user_id", "userId"])
-            .ok_or_else(|| RemoteError::invalid("/api/user/login"))?;
-        let cookies = login
-            .headers
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .filter_map(|v| v.split(';').next())
-            .filter(|v| v.contains('='))
-            .collect::<Vec<_>>()
-            .join("; ");
-        if cookies.is_empty() {
-            return Err(RemoteError {
-                message: "站点登录未返回会话 Cookie，请检查账号或站点的二次验证要求".into(),
-                unauthorized: true,
-            });
+        if let Some(access) = text(&login.data, &["access_token", "accessToken"]) {
+            p.user_id = text(&login.data["user"], &["id", "user_id", "userId"])
+                .or_else(|| text(&login.data, &["id", "user_id", "userId"]))
+                .ok_or_else(|| RemoteError::invalid("/api/user/login"))?;
+            insert_header(&mut headers, "authorization", &format!("Bearer {access}"))?;
+        } else {
+            // Older NewAPI installations return a user ID and session cookies.
+            p.user_id = text(&login.data, &["id", "user_id", "userId"])
+                .ok_or_else(|| RemoteError::invalid("/api/user/login"))?;
+            let cookies = login
+                .headers
+                .get_all("set-cookie")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .filter_map(|v| v.split(';').next())
+                .filter(|v| v.contains('='))
+                .collect::<Vec<_>>()
+                .join("; ");
+            if cookies.is_empty() {
+                return Err(RemoteError {
+                    message: "站点登录未返回会话 Cookie，请检查账号或站点的二次验证要求".into(),
+                    unauthorized: true,
+                });
+            }
+            insert_header(&mut headers, "cookie", &cookies)?;
+            insert_header(&mut headers, "new-api-user", &p.user_id)?;
         }
-        insert_header(&mut headers, "cookie", &cookies)?;
     } else {
         let access = decrypt(s, &p.access_token)?;
         insert_header(&mut headers, "authorization", &format!("Bearer {access}"))?;
+        if !access.starts_with("nap_") {
+            insert_header(&mut headers, "new-api-user", &p.user_id)?;
+        }
     }
-    insert_header(&mut headers, "new-api-user", &p.user_id)?;
+    Ok(headers)
+}
+
+async fn fetch_new(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError> {
+    let headers = new_auth_headers(s, p).await?;
     let unit = match request(s, p, "/api/status", &HeaderMap::new(), None).await {
         Ok(response) => number(&response.data, &["quota_per_unit"])
             .filter(|v| *v > 0.0)
@@ -939,6 +988,9 @@ async fn fetch_new(s: &Shared, p: &mut Provider) -> Result<Metrics, RemoteError>
         Err(_) => 500_000.0,
     };
     let me = request(s, p, "/api/user/self", &headers, None).await?.data;
+    if let Some(user_id) = text(&me, &["id", "user_id", "userId"]) {
+        p.user_id = user_id;
+    }
     let local = chrono::Local::now();
     let midnight = local
         .date_naive()

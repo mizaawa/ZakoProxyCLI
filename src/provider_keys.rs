@@ -146,41 +146,7 @@ async fn headers(s: &Shared, p: &mut Provider) -> Result<HeaderMap, RemoteError>
             &format!("{} {access}", p.token_type),
         )?;
     } else {
-        if p.auth_mode == "password" {
-            let login = providers::request(
-                s,
-                p,
-                "/api/user/login",
-                &h,
-                Some(json!({"username":p.username,"password":providers::decrypt(s,&p.password)?})),
-            )
-            .await?;
-            p.user_id = providers::text(&login.data, &["id", "user_id", "userId"])
-                .ok_or_else(|| RemoteError::invalid("/api/user/login"))?;
-            let cookies = login
-                .headers
-                .get_all("set-cookie")
-                .iter()
-                .filter_map(|v| v.to_str().ok())
-                .filter_map(|v| v.split(';').next())
-                .filter(|v| v.contains('='))
-                .collect::<Vec<_>>()
-                .join("; ");
-            if cookies.is_empty() {
-                return Err(RemoteError {
-                    message: "站点登录未返回有效会话".into(),
-                    unauthorized: true,
-                });
-            }
-            providers::insert_header(&mut h, "cookie", &cookies)?;
-        } else {
-            providers::insert_header(
-                &mut h,
-                "authorization",
-                &format!("Bearer {}", providers::decrypt(s, &p.access_token)?),
-            )?;
-        }
-        providers::insert_header(&mut h, "new-api-user", &p.user_id)?;
+        h = providers::new_auth_headers(s, p).await?;
     }
     Ok(h)
 }

@@ -111,10 +111,24 @@ async fn upstream(State(mock): State<Arc<Mock>>, req: Request<Body>) -> Response
     if path == "/api/status" {
         return Json(json!({"success":true,"data":{"quota_per_unit":500000}})).into_response();
     }
-    if mock.reject_auth.load(Ordering::SeqCst)
-        || header("authorization") != format!("Bearer {ACCESS}")
-        || (!path.starts_with("/api/v1/") && header("new-api-user") != "42")
-    {
+    if path == "/api/user/login" {
+        return if body["username"] == "modern-user" && body["password"] == "modern-password" {
+            Json(json!({"success":true,"data":{"access_token":"new-login-access-secret","token_type":"Bearer","user":{"id":42}}})).into_response()
+        } else {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"message":"invalid login"})),
+            )
+                .into_response()
+        };
+    }
+    let pat_auth = header("authorization") == "Bearer nap_system-token-secret"
+        && header("new-api-user").is_empty();
+    let modern_login_auth = header("authorization") == "Bearer new-login-access-secret"
+        && header("new-api-user").is_empty();
+    let legacy_auth = header("authorization") == format!("Bearer {ACCESS}")
+        && (path.starts_with("/api/v1/") || header("new-api-user") == "42");
+    if mock.reject_auth.load(Ordering::SeqCst) || !(pat_auth || modern_login_auth || legacy_auth) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"message":"invalid upstream session"})),
@@ -333,6 +347,84 @@ fn assert_private(value: &Value) {
     let text = value.to_string();
     assert!(!text.contains(ACCESS), "provider session leaked: {value}");
     assert!(!text.contains(FULL_KEY), "full API key leaked: {value}");
+}
+
+#[tokio::test]
+async fn newapi_pat_imports_keys_without_legacy_user_header() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server(vec![new_key(1)]).await;
+    let (status, provider, _) = request(
+        &state,
+        "POST",
+        "/api/providers",
+        json!({
+            "name":"Modern NewAPI","kind":"newapi","base_url":url,"auth_mode":"token",
+            "user_id":"","access_token":"nap_system-token-secret","token_type":"Bearer"
+        }),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{provider}");
+    let id = provider["id"].as_str().unwrap();
+    let (status, keys, _) = request(
+        &state,
+        "GET",
+        &format!("/api/providers/{id}/keys"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{keys}");
+    assert_eq!(keys["keys"][0]["id"], "1");
+    let (status, bound, _) =
+        request(&state, "POST", "/api/accounts", account(id, "1"), &cookie).await;
+    assert_eq!(status, StatusCode::OK, "{bound}");
+    let calls = mock.calls.lock().unwrap();
+    assert!(calls.iter().any(|call| call.path == "/api/token/"
+        && call.headers.get("authorization").unwrap() == "Bearer nap_system-token-secret"
+        && !call.headers.contains_key("new-api-user")));
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.path == "/api/token/1/key"
+                && !call.headers.contains_key("new-api-user"))
+    );
+}
+
+#[tokio::test]
+async fn newapi_modern_password_login_imports_keys_with_bearer_session() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (url, mock, _server) = mock_server(vec![new_key(1)]).await;
+    let (status, provider, _) = request(
+        &state,
+        "POST",
+        "/api/providers",
+        json!({
+            "name":"Modern NewAPI","kind":"newapi","base_url":url,"auth_mode":"password",
+            "username":"modern-user","password":"modern-password"
+        }),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{provider}");
+    let id = provider["id"].as_str().unwrap();
+    let (status, keys, _) = request(
+        &state,
+        "GET",
+        &format!("/api/providers/{id}/keys"),
+        Value::Null,
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{keys}");
+    assert_eq!(keys["keys"][0]["id"], "1");
+    let calls = mock.calls.lock().unwrap();
+    assert!(calls.iter().any(|call| call.path == "/api/user/login"));
+    assert!(calls.iter().any(|call| call.path == "/api/token/"
+        && call.headers.get("authorization").unwrap() == "Bearer new-login-access-secret"
+        && !call.headers.contains_key("new-api-user")));
 }
 
 async fn create_account(s: &Shared, cookie: &str, pid: &str, kid: &str) -> Value {
