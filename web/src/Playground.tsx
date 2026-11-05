@@ -36,10 +36,74 @@ type Attachment = { kind: "text" | "image"; name: string; mime_type: string; tex
 type SearchResult = { title: string; url: string; snippet: string };
 type Message = { role: "user" | "assistant"; content: string; reasoning?: string; raw?: string; attachments?: Attachment[]; sources?: SearchResult[] };
 type SavedSettings = { systemPrompt?: string; temperature?: number; topP?: number; frequencyPenalty?: number; presencePenalty?: number; maxTokens?: number; seed?: string; enabledParams?: { temperature: boolean; topP: boolean; frequencyPenalty: boolean; presencePenalty: boolean; maxTokens: boolean; seed: boolean }; stream?: boolean; searchEnabled?: boolean };
+type ReasoningDetail = string | { text?: string; summary?: string };
+type ReasoningFields = {
+  reasoning_content?: string | null;
+  reasoning?: string | null;
+  thinking?: string | null;
+  reasoning_details?: ReasoningDetail[] | null;
+};
+type CompletionMessage = ReasoningFields & { content?: string | null };
 type Completion = {
-  choices?: { message?: { content?: string | null; reasoning_content?: string | null }; delta?: { content?: string | null; reasoning_content?: string | null }; finish_reason?: string | null }[];
+  choices?: { message?: CompletionMessage; delta?: CompletionMessage; finish_reason?: string | null }[];
   error?: { message?: string } | string;
 };
+
+function reasoningText(value?: ReasoningFields) {
+  const direct = [value?.reasoning_content, value?.reasoning, value?.thinking]
+    .find((text) => typeof text === "string" && text.trim());
+  if (direct) return direct;
+  return value?.reasoning_details?.map((detail) =>
+    typeof detail === "string" ? detail : detail.text || detail.summary || "",
+  ).filter(Boolean).join("\n") || "";
+}
+
+function splitThinkContent(value: string, streaming = false) {
+  const lower = value.toLowerCase();
+  let answer = "";
+  let reasoning = "";
+  let cursor = 0;
+  let insideThink = false;
+  while (cursor < value.length) {
+    if (insideThink) {
+      const end = lower.indexOf("</think>", cursor);
+      if (end < 0) {
+        reasoning += value.slice(cursor);
+        break;
+      }
+      reasoning += value.slice(cursor, end);
+      cursor = end + "</think>".length;
+      insideThink = false;
+      continue;
+    }
+    const start = lower.indexOf("<think>", cursor);
+    if (start < 0) {
+      const remainder = value.slice(cursor);
+      let partialTagLength = 0;
+      if (streaming) {
+        for (let length = Math.min(remainder.length, "<think>".length - 1); length > 0; length--) {
+          if (`<think>`.startsWith(remainder.slice(-length).toLowerCase())) {
+            partialTagLength = length;
+            break;
+          }
+        }
+      }
+      answer += remainder.slice(0, remainder.length - partialTagLength);
+      break;
+    }
+    answer += value.slice(cursor, start);
+    cursor = start + "<think>".length;
+    insideThink = true;
+  }
+  return { content: answer, reasoning };
+}
+
+function joinReasoning(explicit: string, inline: string) {
+  if (!explicit) return inline;
+  if (!inline || explicit.includes(inline)) return explicit;
+  if (inline.includes(explicit)) return inline;
+  return `${explicit.trimEnd()}\n\n${inline.trimStart()}`;
+}
 
 function responseError(value: Completion, fallback: string) {
   return typeof value.error === "string" ? value.error : value.error?.message || fallback;
@@ -349,8 +413,8 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let content = "";
-        let reasoning = "";
+        let responseContent = "";
+        let responseReasoning = "";
         let raw = "";
         const consume = (event: string) => {
           const data = event.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
@@ -358,13 +422,20 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
           const value = JSON.parse(data) as Completion;
           raw += `${data}\n`;
           if (value.error) throw new Error(responseError(value, "生成失败"));
-          const delta = value.choices?.[0]?.delta?.content || "";
-          const thought = value.choices?.[0]?.delta?.reasoning_content || "";
-          if (thought) reasoning += thought;
-          if (delta) {
-            content += delta;
+          const delta = value.choices?.[0]?.delta;
+          const text = typeof delta?.content === "string" ? delta.content : "";
+          const thought = reasoningText(delta);
+          if (thought) responseReasoning += thought;
+          if (text) responseContent += text;
+          if (text || thought) {
+            const parts = splitThinkContent(responseContent, true);
+            setMessages([...history, {
+              role: "assistant",
+              content: parts.content,
+              reasoning: joinReasoning(responseReasoning, parts.reasoning),
+              sources,
+            }]);
           }
-          if (delta || thought) setMessages([...history, { role: "assistant", content, reasoning, sources }]);
         };
         while (true) {
           const result = await reader.read();
@@ -376,19 +447,23 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
         }
         buffer += decoder.decode();
         if (buffer.trim()) consume(buffer);
-        if (!content && !reasoning) throw new Error("模型未返回文本内容");
-        setMessages([...history, { role: "assistant", content, reasoning, raw, sources }]);
+        const parts = splitThinkContent(responseContent);
+        const reasoning = joinReasoning(responseReasoning, parts.reasoning);
+        if (!parts.content && !reasoning) throw new Error("模型未返回文本内容");
+        setMessages([...history, { role: "assistant", content: parts.content, reasoning, raw, sources }]);
       } else {
         const value = await response.json() as Completion;
         if (value.error) throw new Error(responseError(value, "生成失败"));
-        const content = value.choices?.[0]?.message?.content || "";
-        setMessages([...history, { role: "assistant", content, reasoning: value.choices?.[0]?.message?.reasoning_content || "", raw: JSON.stringify(value, null, 2), sources }]);
+        const message = value.choices?.[0]?.message;
+        const parts = splitThinkContent(typeof message?.content === "string" ? message.content : "");
+        const reasoning = joinReasoning(reasoningText(message), parts.reasoning);
+        setMessages([...history, { role: "assistant", content: parts.content, reasoning, raw: JSON.stringify(value, null, 2), sources }]);
       }
     } catch (failure) {
       if (controller.signal.aborted) {
-        if (abortRef.current === controller) setMessages((current) => current.at(-1)?.content ? current : history);
+        if (abortRef.current === controller) setMessages((current) => current.at(-1)?.content || current.at(-1)?.reasoning ? current : history);
       } else {
-        setMessages((current) => current.at(-1)?.content ? current : history);
+        setMessages((current) => current.at(-1)?.content || current.at(-1)?.reasoning ? current : history);
         setError(errorMessage(failure));
       }
     } finally {
@@ -547,8 +622,8 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
                 <div className="playground-message-body">
                   <div className="playground-message-meta"><strong>{message.role === "user" ? "你" : "助手"}</strong></div>
                   {message.attachments?.length ? <div className="playground-message-files">{message.attachments.map((file, fileIndex) => <span key={`${file.name}-${fileIndex}`}><Paperclip size={12} />{file.name}</span>)}</div> : null}
-                  {message.reasoning && <details className="playground-reasoning"><summary>思考内容</summary><div>{message.reasoning}</div></details>}
-                  {message.content ? <div className="playground-message-text">{message.role === "assistant" ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : message.content}</div> : <span className="playground-thinking"><i /><i /><i /><span>正在生成…</span></span>}
+                  {message.reasoning && <details className="playground-reasoning" open><summary><Sparkles size={14} /><span>思考过程</span><ChevronDown size={14} /></summary><div className="playground-reasoning-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.reasoning}</ReactMarkdown></div></details>}
+                  {message.content ? <div className="playground-message-text">{message.role === "assistant" ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : message.content}</div> : message.role === "assistant" && busy && index === messages.length - 1 ? <span className="playground-thinking"><i /><i /><i /><span>正在生成…</span></span> : null}
                   {message.sources?.length ? <div className="playground-sources"><strong><Globe2 size={13} /> 搜索来源</strong>{message.sources.map((source, sourceIndex) => <a key={`${source.url}-${sourceIndex}`} href={source.url} target="_blank" rel="noreferrer" title={source.snippet}>{sourceIndex + 1}. {source.title}</a>)}</div> : null}
                   {message.role === "assistant" && message.raw && <div className="playground-raw-toggle"><button type="button" onClick={() => setRawIndex(rawIndex === index ? null : index)}>{rawIndex === index ? "预览" : "原始响应"}</button>{rawIndex === index && <pre>{message.raw}</pre>}</div>}
                   {(message.content || !busy) && <div className="playground-message-actions" aria-label={`${message.role === "user" ? "你的" : "助手"}消息操作`}>

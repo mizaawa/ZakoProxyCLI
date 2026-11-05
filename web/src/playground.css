@@ -96,9 +96,14 @@
 .playground-message-text blockquote { padding-left: 12px; margin: 8px 0; border-left: 3px solid var(--pink-300); color: var(--muted); }
 .playground-message-text table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .playground-message-text th, .playground-message-text td { padding: 6px 9px; border: 1px solid var(--line); }
-.playground-reasoning { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--pink-50); }
-.playground-reasoning summary { padding: 8px 11px; color: var(--muted); font-size: 11px; font-weight: 800; cursor: pointer; }
-.playground-reasoning > div { padding: 0 11px 10px; white-space: pre-wrap; color: var(--ink-soft); font-size: 12px; }
+.playground-reasoning { margin-bottom: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(135deg, var(--pink-50), #fffafc); }
+.playground-reasoning summary { display: flex; align-items: center; gap: 7px; padding: 9px 11px; color: var(--pink-700); font-size: 11px; font-weight: 800; cursor: pointer; list-style: none; }
+.playground-reasoning summary::-webkit-details-marker { display: none; }
+.playground-reasoning summary > svg:last-child { margin-left: auto; transition: transform 160ms ease-out; }
+.playground-reasoning[open] summary > svg:last-child { transform: rotate(180deg); }
+.playground-reasoning-body { padding: 0 12px 11px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.playground-reasoning-body > :first-child { margin-top: 10px; }
+.playground-reasoning-body > :last-child { margin-bottom: 0; }
 .playground-raw-toggle { margin-top: 8px; }
 .playground-raw-toggle button { padding: 3px 0; border: 0; background: transparent; color: var(--pink-700); font-size: 11px; font-weight: 800; }
 .playground-raw-toggle pre { max-height: 230px; overflow: auto; padding: 10px; border-radius: 10px; background: #372a35; color: white; font-size: 11px; }
