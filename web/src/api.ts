@@ -222,6 +222,13 @@ export type Profile = {
     validation: string;
   };
 };
+export type ProfileTemplate = {
+  id: string;
+  name: string;
+  source_url: string;
+  source_revision: string;
+  validation: string;
+};
 export type State = {
   groups: Group[];
   accounts: Account[];

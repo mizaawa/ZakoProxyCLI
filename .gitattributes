@@ -15,3 +15,7 @@ profiles/coldcoffee-gpt/* text eol=lf
 third_party/coldcoffee-gpt/** text eol=lf whitespace=-blank-at-eof
 third_party/gpt-instruct/*.json text eol=lf
 scripts/import-coldcoffee-gpt.py text eol=lf
+profiles/coldcoffee-full/* text eol=lf
+third_party/coldcoffee-full/** text eol=lf whitespace=-blank-at-eof
+scripts/import-coldcoffee-full.py text eol=lf
+scripts/test_coldcoffee_full.py text eol=lf

@@ -701,6 +701,86 @@ async fn key_profile_selections_validate_edit_and_persist_across_restart() {
 }
 
 #[tokio::test]
+async fn coldcoffee_template_catalog_and_explicit_bindings_persist_and_validate() {
+    let (dir, s) = fixture();
+    let (_, response, _) = request(&s, "GET", "/api/profile-templates", Value::Null, "", "/").await;
+    assert!(response.get("error").is_some());
+    let cookie = setup(&s).await;
+    let (status, templates, _) = request(
+        &s,
+        "GET",
+        "/api/profile-templates",
+        Value::Null,
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(templates.as_array().unwrap().len(), 15);
+    assert!(
+        templates
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|template| template.get("instruction").is_none())
+    );
+    let actual = "provider/actual@model";
+    let group_id = strategy_group(&s, &cookie, "Templates", vec![actual.into()]).await;
+    let binding = format!("coldcoffee@meta-muse@{}", hex::encode(actual));
+    let other = format!("coldcoffee@cursor@{}", hex::encode(actual));
+    let (status, created, _) = request(
+        &s,
+        "POST",
+        "/api/keys",
+        json!({
+            "name":"Template key", "group_id":group_id, "profile_ids":[binding]
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let key_id = created["id"].as_str().unwrap();
+    for invalid in [
+        vec![binding.clone(), other],
+        vec!["coldcoffee@unknown@61".into()],
+        vec![format!(
+            "coldcoffee@kimi@{}",
+            hex::encode("unconfigured-model")
+        )],
+    ] {
+        let (status, _, _) = request(
+            &s,
+            "PUT",
+            &format!("/api/keys/{key_id}"),
+            json!({
+                "name":"Rejected", "group_id":group_id, "profile_ids":invalid
+            }),
+            &cookie,
+            "/",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let (_, keys, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
+    assert_eq!(keys[0]["profile_ids"], json!([binding]));
+    let (status, catalog, _) = request(&s, "GET", "/api/profiles", Value::Null, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    let saved = catalog
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|profile| profile["id"] == binding)
+        .unwrap();
+    assert_eq!(saved["models"], json!([actual]));
+    assert_eq!(saved["metadata"]["variant"], "meta-muse");
+    assert!(saved["instruction"].as_str().unwrap().contains("Meta Muse"));
+    assert_eq!(catalog.as_array().unwrap().len(), profiles::all().len() + 1);
+}
+
+#[tokio::test]
 async fn overlapping_strategy_variants_are_rejected_without_mutating_keys() {
     let (_dir, s) = fixture();
     let cookie = setup(&s).await;

@@ -307,6 +307,44 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
 }
 
 #[tokio::test]
+async fn every_coldcoffee_template_binds_exact_actual_models_on_all_protocols() {
+    let (_dir, state) = fixture();
+    let mut router = Router::new();
+    for protocol in ["responses", "compact", "chat", "anthropic"] {
+        router = router.route(path(protocol), post(echo));
+    }
+    let (endpoint, _server) = serve(router).await;
+    let model = "provider/实际模型@2026";
+    add_account(
+        &state,
+        &endpoint,
+        "template-account",
+        vec![model.into()],
+        [("client-alias".into(), model.into())].into(),
+        &["responses", "compact", "chat", "anthropic"],
+        0,
+    );
+    assert_eq!(profiles::templates().len(), 15);
+    for template in profiles::templates() {
+        let id = format!("coldcoffee@{}@{}", template.id, hex::encode(model));
+        let profile = profiles::find(&id).unwrap();
+        select_profiles(&state, vec![id]);
+        for protocol in ["responses", "compact", "chat", "anthropic"] {
+            let body = original_body(protocol, "client-alias");
+            let (status, output) =
+                json_response(request(&state, protocol, body.clone()).await).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{} {protocol}: {output}",
+                template.id
+            );
+            assert_eq!(output, expected_body(protocol, body, model, Some(&profile)));
+        }
+    }
+}
+
+#[tokio::test]
 async fn new_glm_and_grok_aliases_select_actual_model_profiles_on_all_protocols() {
     let (_dir, state) = fixture();
     let models = ["glm-5.3-flash", "glm-5.3-air", "grok-4.6", "grok-build"];
@@ -346,7 +384,7 @@ async fn new_glm_and_grok_aliases_select_actual_model_profiles_on_all_protocols(
             assert_eq!(status, StatusCode::OK, "{protocol} {model}: {output}");
             assert_eq!(
                 output,
-                expected_body(protocol, original, model, Some(profile))
+                expected_body(protocol, original, model, Some(&profile))
             );
         }
     }

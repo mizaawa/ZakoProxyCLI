@@ -28,15 +28,11 @@ fn kimi_catalog_matches_only_selected_exact_models() {
         assert!(profiles::instruction(&group, &model.to_uppercase()).is_none());
         assert!(profiles::instruction(&Group::default(), model).is_none());
         assert!(!profile.instruction.contains("${"));
+        assert!(profile.instruction.contains("ZakoAI · 冷咖啡 API 内联适配"));
         assert!(
             profile
                 .instruction
-                .contains("ZakoAI · kimi-break API 内联适配")
-        );
-        assert!(
-            profile
-                .instruction
-                .contains("Only tools declared in this request are available")
+                .contains("只使用本次请求实际声明的工具与真实返回")
         );
         assert!(!profile.instruction.contains("running on WREN's computer"));
     }

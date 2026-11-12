@@ -1,0 +1,77 @@
+[
+  {
+    "id": "codex",
+    "name": "冷咖啡 · GPT / Codex",
+    "source_path": "desktop/src/lib/packs/codex.md"
+  },
+  {
+    "id": "claude",
+    "name": "冷咖啡 · Claude",
+    "source_path": "desktop/src/lib/packs/claude.md"
+  },
+  {
+    "id": "grok",
+    "name": "冷咖啡 · Grok",
+    "source_path": "desktop/src/lib/packs/grok.md"
+  },
+  {
+    "id": "deepseek",
+    "name": "冷咖啡 · DeepSeek",
+    "source_path": "desktop/src/lib/packs/deepseek.md"
+  },
+  {
+    "id": "glm53",
+    "name": "冷咖啡 · GLM 5.3",
+    "source_path": "desktop/src/lib/packs/glm53.md"
+  },
+  {
+    "id": "gemini",
+    "name": "冷咖啡 · Gemini",
+    "source_path": "desktop/src/lib/packs/gemini.md"
+  },
+  {
+    "id": "doubao",
+    "name": "冷咖啡 · 豆包",
+    "source_path": "desktop/src/lib/packs/doubao.md"
+  },
+  {
+    "id": "workbuddy",
+    "name": "冷咖啡 · WorkBuddy",
+    "source_path": "desktop/src/lib/packs/workbuddy.md"
+  },
+  {
+    "id": "cursor",
+    "name": "冷咖啡 · Cursor",
+    "source_path": "desktop/src/lib/packs/cursor.md"
+  },
+  {
+    "id": "mimo",
+    "name": "冷咖啡 · MiniMax 3.1 Flash",
+    "source_path": "desktop/src/lib/packs/mimo.md"
+  },
+  {
+    "id": "kimi",
+    "name": "冷咖啡 · Kimi K3.1",
+    "source_path": "desktop/src/lib/packs/kimi.md"
+  },
+  {
+    "id": "grok-bot",
+    "name": "冷咖啡 · Grok Bot",
+    "source_path": "desktop/src/lib/packs/local-agent-skills/grok-bot.md"
+  },
+  {
+    "id": "claude-duet",
+    "name": "冷咖啡 · Claude Duet",
+    "source_path": "desktop/src/lib/packs/local-agent-skills/claude-duet.md"
+  },
+  {
+    "id": "chatgpt-dot",
+    "name": "冷咖啡 · ChatGPT Dot",
+    "source_path": "desktop/src/lib/packs/local-agent-skills/chatgpt-dot.md"
+  },
+  {
+    "id": "meta-muse",
+    "name": "冷咖啡 · Meta Muse",
+    "source_path": "desktop/src/lib/packs/local-agent-skills/meta-muse.md"
+  }
+]

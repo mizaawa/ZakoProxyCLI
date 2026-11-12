@@ -844,7 +844,7 @@ fn key_profiles(
             );
         }
         for model in &profile.models {
-            if !models.insert(model) {
+            if !models.insert(model.clone()) {
                 return Err(format!(
                     "Only one instruction profile may target model {model}"
                 ));
@@ -1293,7 +1293,25 @@ pub async fn test_proxy(
 }
 pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
-    Ok(Json(json!(profiles::all())))
+    let config = s.store.config()?;
+    let mut catalog: Vec<_> = profiles::all()
+        .iter()
+        .map(std::borrow::Cow::Borrowed)
+        .collect();
+    let mut seen: std::collections::HashSet<_> =
+        catalog.iter().map(|profile| profile.id.clone()).collect();
+    for id in config.keys.iter().flat_map(|key| &key.profile_ids) {
+        if seen.insert(id.clone())
+            && let Some(profile) = profiles::find(id)
+        {
+            catalog.push(profile);
+        }
+    }
+    Ok(Json(json!(catalog)))
+}
+pub async fn profile_templates(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
+    auth(&s, &h)?;
+    Ok(Json(json!(profiles::templates())))
 }
 #[derive(Deserialize)]
 pub struct Range {

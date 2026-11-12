@@ -874,6 +874,12 @@ td strong { font-weight: 700; color: var(--ink); }
 .profile-option input:checked + .profile-checkbox > svg { visibility: visible; }
 .profile-description { flex: 1; min-width: 0; }
 .profile-description > strong { font-size: 13px; font-weight: 700; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
+.profile-description > small { display: block; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.template-picker { margin-bottom: 12px; }
+.template-picker > summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+.template-picker-fields { display: grid; gap: 12px; padding: 8px 0; }
+.template-picker-fields .select-wrap { min-width: 0; }
+.template-picker-fields select { width: 100%; min-width: 0; }
 .profile-fieldset:disabled .profile-option { opacity: 0.6; cursor: wait; }
 .default-strategy-setting { display: grid; gap: 8px; margin-top: 18px; padding-top: 16px; border-top: 1.5px dashed var(--line-strong); }
 .default-strategy-setting .toggle-label { width: fit-content; max-width: 100%; min-height: 32px; }

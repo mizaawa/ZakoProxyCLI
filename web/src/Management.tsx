@@ -21,7 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, copy, errorMessage, number, time, tokenCount } from "./api";
-import type { Account, Group, Profile, ProviderBinding, ProxyTestResult, RelayKey, State } from "./api";
+import type { Account, Group, Profile, ProfileTemplate, ProviderBinding, ProxyTestResult, RelayKey, State } from "./api";
 import {
   Badge,
   Button,
@@ -1473,12 +1473,35 @@ function KeyForm({
     relayKey?.default_strategy_enabled ?? false,
   );
   const [profileSearch, setProfileSearch] = useState("");
+  const [templates, setTemplates] = useState<ProfileTemplate[]>([]);
+  const [templateError, setTemplateError] = useState("");
+  const [templateLoading, setTemplateLoading] = useState(true);
+  const [templateId, setTemplateId] = useState("");
+  const [templateModel, setTemplateModel] = useState("");
+  const [localProfiles, setLocalProfiles] = useState<Profile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const availableProfiles = useMemo(() => {
+    const merged = new Map(state.profiles.map((profile) => [profile.id, profile]));
+    for (const profile of localProfiles) merged.set(profile.id, profile);
+    return [...merged.values()];
+  }, [state.profiles, localProfiles]);
+  const actualModels = useMemo(
+    () => [...supportedModelsForGroup(group, state.accounts)].sort(modelNameOrder.compare),
+    [group, state.accounts],
+  );
+  useEffect(() => {
+    let active = true;
+    void api<ProfileTemplate[]>("/profile-templates")
+      .then((items) => { if (active) setTemplates(items); })
+      .catch((failure) => { if (active) setTemplateError(errorMessage(failure)); })
+      .finally(() => { if (active) setTemplateLoading(false); });
+    return () => { active = false; };
+  }, []);
   const selectedGroup = state.groups.find((item) => item.id === group);
   const supportedProfiles = useMemo(
-    () => profilesSupportedByGroup(group, state.accounts, state.profiles),
-    [group, state.accounts, state.profiles],
+    () => profilesSupportedByGroup(group, state.accounts, availableProfiles),
+    [group, state.accounts, availableProfiles],
   );
   const supportedProfileIds = useMemo(
     () => new Set(supportedProfiles.map((profile) => profile.id)),
@@ -1487,7 +1510,16 @@ function KeyForm({
   const selectedProfiles = profiles.filter((id) => supportedProfileIds.has(id));
   const visibleProfiles = useMemo(() => {
     const query = profileSearch.trim().toLowerCase();
-    return [...supportedProfiles]
+    const distinct = new Map<string, Profile>();
+    for (const profile of supportedProfiles) {
+      const equivalent = profile.metadata
+        ? JSON.stringify([profile.metadata.source_revision, profile.metadata.variant, [...profile.models].sort()])
+        : profile.id;
+      if (!distinct.has(equivalent) || profiles.includes(profile.id)) {
+        distinct.set(equivalent, profile);
+      }
+    }
+    return [...distinct.values()]
       .sort(
         (a, b) =>
           modelNameOrder.compare(
@@ -1498,9 +1530,9 @@ function KeyForm({
           modelNameOrder.compare(a.id, b.id),
       )
       .filter((profile) =>
-        profile.models.some((model) => model.toLowerCase().includes(query)),
+        profile.name.toLowerCase().includes(query) || profile.models.some((model) => model.toLowerCase().includes(query)),
       );
-  }, [supportedProfiles, profileSearch]);
+  }, [supportedProfiles, profileSearch, profiles]);
 
   useEffect(() => {
     setProfiles((current) => {
@@ -1511,11 +1543,32 @@ function KeyForm({
 
   function selectGroup(groupId: string) {
     const supported = new Set(
-      profilesSupportedByGroup(groupId, state.accounts, state.profiles).map((profile) => profile.id),
+      profilesSupportedByGroup(groupId, state.accounts, availableProfiles).map((profile) => profile.id),
     );
     setProfiles((current) => current.filter((id) => supported.has(id)));
     setGroup(groupId);
     setProfileSearch("");
+    setTemplateModel("");
+  }
+
+  function applyTemplate() {
+    const template = templates.find((item) => item.id === templateId);
+    if (!template || !actualModels.includes(templateModel)) return;
+    const encoded = [...new TextEncoder().encode(templateModel)]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (encoded.length > 1024) { setTemplateError("模型 ID 过长，无法绑定策略"); return; }
+    const id = `coldcoffee@${template.id}@${encoded}`;
+    const profile: Profile = {
+      id, name: `${template.name} · ${templateModel}`, models: [templateModel],
+      model_family: "custom", instruction: "",
+      metadata: { source_url: template.source_url, source_revision: template.source_revision,
+        variant: template.id, validation: template.validation },
+    };
+    const overlapping = new Set(availableProfiles.filter((item) => item.models.includes(templateModel)).map((item) => item.id));
+    setLocalProfiles((current) => [...current.filter((item) => item.id !== id), profile]);
+    setProfiles((current) => [...current.filter((item) => !overlapping.has(item) && item !== id), id]);
+    setProfileSearch(templateModel);
+    setTemplateError("");
   }
 
   async function submit(event: FormEvent) {
@@ -1585,6 +1638,27 @@ function KeyForm({
           <legend>
             破甲策略<span>{selectedProfiles.length} 个已选</span>
           </legend>
+          <details className="template-picker">
+            <summary>添加冷咖啡策略模板</summary>
+            <div className="template-picker-fields">
+              <Field label="实际模型">
+                <Select aria-label="模板绑定的实际模型" value={templateModel} onChange={(event) => setTemplateModel(event.target.value)}>
+                  <option value="">选择此分组的可用模型</option>
+                  {actualModels.map((model) => <option key={model} value={model}>{model}</option>)}
+                </Select>
+              </Field>
+              <Field label="策略模板">
+                <Select aria-label="冷咖啡策略模板" value={templateId} onChange={(event) => setTemplateId(event.target.value)} disabled={templateLoading}>
+                  <option value="">{templateLoading ? "正在加载模板…" : "选择策略模板"}</option>
+                  {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+                </Select>
+              </Field>
+              <Button type="button" onClick={applyTemplate} disabled={!actualModels.includes(templateModel) || !templateId || templateLoading}>应用模板</Button>
+            </div>
+            {!actualModels.length && <p className="field-hint">请先在此分组的已启用账号中配置模型。</p>}
+            <p className="field-hint">应用后替换该模型已选的策略，保存密钥后生效。</p>
+            {templateError && <ErrorBox message={templateError} />}
+          </details>
           <div
             className="profile-search"
             onKeyDown={(event) => {
@@ -1618,7 +1692,7 @@ function KeyForm({
                       setProfiles((current) => {
                         if (!checked) return current.filter((id) => id !== item.id);
                         const overlapping = new Set(
-                          state.profiles
+                          availableProfiles
                             .filter((profile) =>
                               profile.models.some((model) => item.models.includes(model)),
                             )
@@ -1636,6 +1710,7 @@ function KeyForm({
                   </span>
                   <span className="profile-description">
                     <strong>{profileDisplayModels(item).join(" · ")}</strong>
+                    <small>{item.name}</small>
                   </span>
                 </label>
               </div>
