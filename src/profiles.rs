@@ -123,7 +123,7 @@ pub fn find(id: &str) -> Option<&'static Profile> {
 
 // Only exact historical presets migrate; discarded custom fields never become active.
 pub(crate) fn legacy_profile(models: &[String], instruction: &str) -> Option<&'static Profile> {
-    all().iter().find(|profile| {
+    let current = all().iter().find(|profile| {
         (instruction == profile.instruction
             || (profile.model_family == "deepseek"
                 && profile
@@ -133,6 +133,23 @@ pub(crate) fn legacy_profile(models: &[String], instruction: &str) -> Option<&'s
                     .is_some_and(|previous| instruction == previous)))
             && models.len() == profile.models.len()
             && models.iter().all(|model| profile.models.contains(model))
+    });
+    current.or_else(|| {
+        static LEGACY_GPT: OnceLock<Vec<Profile>> = OnceLock::new();
+        LEGACY_GPT
+            .get_or_init(|| {
+                serde_json::from_str(include_str!(
+                    "../third_party/gpt-instruct/profiles.legacy.json"
+                ))
+                .expect("Historical GPT profiles must be valid JSON")
+            })
+            .iter()
+            .find(|profile| {
+                instruction == profile.instruction
+                    && models.len() == profile.models.len()
+                    && models.iter().all(|model| profile.models.contains(model))
+            })
+            .and_then(|profile| find(&profile.id))
     })
 }
 
@@ -364,6 +381,45 @@ mod tests {
                 .unwrap()
                 .instruction
         );
+    }
+
+    #[test]
+    fn coldcoffee_gpt_keeps_exact_model_selection_and_legacy_settings() {
+        let historical: Vec<Profile> = serde_json::from_str(include_str!(
+            "../third_party/gpt-instruct/profiles.legacy.json"
+        ))
+        .unwrap();
+        assert_eq!(historical.len(), 3);
+        for old in historical {
+            let profile = find(&old.id).unwrap();
+            assert_eq!(profile.models, old.models);
+            assert_ne!(profile.instruction, old.instruction);
+            assert_eq!(
+                profile.instruction,
+                include_str!("../profiles/coldcoffee-gpt/system.md")
+            );
+            assert!(!profile.instruction.contains("{{"));
+            let metadata = profile.metadata.as_ref().unwrap();
+            assert_eq!(metadata.variant, "codex-api-inline");
+            assert_eq!(metadata.validation, "unverified");
+            assert_eq!(
+                metadata.source_revision,
+                "3249afce6b853ff2f2133e016b223db2cf38b087"
+            );
+            let group: Group = serde_json::from_value(serde_json::json!({
+                "name":"Historical GPT", "models":old.models, "instruction":old.instruction
+            }))
+            .unwrap();
+            assert_eq!(group.profile_ids.as_slice(), std::slice::from_ref(&old.id));
+            assert_eq!(
+                instruction(&group, &old.models[0]),
+                Some(profile.instruction.as_str())
+            );
+            assert!(instruction(&group, &format!("{}-unlisted", old.models[0])).is_none());
+            assert!(instruction(&Group::default(), &old.models[0]).is_none());
+            assert!(legacy_profile(&old.models, &format!("{} custom", old.instruction)).is_none());
+            assert!(legacy_profile(&["gpt-60".into()], &old.instruction).is_none());
+        }
     }
 
     #[test]

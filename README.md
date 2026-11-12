@@ -292,7 +292,7 @@ curl -N http://localhost:1990/v1/responses \
 
 | 模型系列 | 精确匹配的实际模型 ID |
 | --- | --- |
-| GPT（保留） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
+| GPT（冷咖啡 Codex） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
 | Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
 | Grok | `grok-4.7`、`grok-4.6`、`grok-build` |
 | Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
@@ -305,15 +305,17 @@ curl -N http://localhost:1990/v1/responses \
 <details>
 <summary>策略机制与调度规则：来源、正文体积、重试、冷却与故障转移</summary>
 
-默认策略从现有 `gpt-6-astra` 提示词的任务执行与连续任务机制改编为多模型 API 文本，见 [profiles/default.md](profiles/default.md) 和 [profiles/default.SOURCE.json](profiles/default.SOURCE.json)。正文为 3,844 字节 UTF-8，移除固定模型身份、本机工具环境和强制四文件交付等假设，保留客户端上下文和真实可用工具。开启后，未选专用策略的模型及目录外模型均可使用默认策略，前提仍是账号已勾选该实际模型。界面提示：“开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项”。密钥 API 的 `PUT` 省略开关字段保留原值，显式 `false` 关闭；`null` 或非布尔值会被拒绝。
+默认策略从历史 `gpt-6-astra` 提示词的任务执行与连续任务机制改编为多模型 API 文本，见 [profiles/default.md](profiles/default.md) 和 [profiles/default.SOURCE.json](profiles/default.SOURCE.json)。正文为 3,844 字节 UTF-8，移除固定模型身份、本机工具环境和强制四文件交付等假设，保留客户端上下文和真实可用工具。开启后，未选专用策略的模型及目录外模型均可使用默认策略，前提仍是账号已勾选该实际模型。界面提示：“开启后，未勾选模型将采取默认提示词注入尝试进行破甲，如造成无法正常使用现象请关闭此选项”。密钥 API 的 `PUT` 省略开关字段保留原值，显式 `false` 关闭；`null` 或非布尔值会被拒绝。
 
-目前 27 个策略继续使用冷咖啡正文，保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。v0.6.0 将 DeepSeek 4.1 Flash 的一个策略替换为寒霜改编正文，其余 DeepSeek 策略不变。冷咖啡历史来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行安装器或 Skill。
+v0.13.4 将 `gpt-5.6-sol`、`gpt-6-astra` 和 `gpt-6.1-sol` 的专用策略更新为冷咖啡当前 Codex 席位的 API 内联适配，固定上游提交 [`3249afce6b853ff2f2133e016b223db2cf38b087`](https://github.com/3641397194-wq/gpt6-Astra/tree/3249afce6b853ff2f2133e016b223db2cf38b087)。三个现有 profile ID 保留，已选中的客户端密钥沿用选择并使用更新后的正文；显示名为 `冷咖啡 · <模型 ID>`。共享正文为 **65,589 字节 UTF-8**，字节数不等于 token 数，会增加输入上下文；`metadata.validation` 为 `unverified`，尚未实测真实模型效果。默认策略及其他模型家族不变。来源、哈希和适配范围见 [profiles/coldcoffee-gpt/SOURCE.json](profiles/coldcoffee-gpt/SOURCE.json)，`python scripts/import-coldcoffee-gpt.py --check` 可离线核验。
+
+此前 27 个非 GPT 策略继续使用冷咖啡正文，保留上游席位正文、工作链和完整路由技能，单次匹配注入约 64–66 KB 的 UTF-8 文本，会占用上下文并增加输入 token。v0.6.0 将 DeepSeek 4.1 Flash 的一个策略替换为寒霜改编正文，其余 DeepSeek 策略不变。冷咖啡历史来源、逐文件哈希及适配范围记录于 [profiles/coldcoffee/SOURCE.json](profiles/coldcoffee/SOURCE.json)；可用 `python scripts/import-coldcoffee.py UPSTREAM_CHECKOUT` 从指定版本的干净上游副本重新生成，脚本只读取数据，不执行安装器或 Skill。
 
 专用策略按精确模型选择，不按系列通配匹配。寒霜策略沿用 `coldcoffee-deepseek-v4.1-flash-v1`，迁移到密钥的已有选择继续匹配 `deepseek-v4.1-flash` 与 `deepseek-4.1-flash`；新增独立 `hanshuang-deepseek-flash-v1` 策略匹配 `deepseek-flash`，正文相同。名单表示策略选择，并不承诺上游提供这些模型；以账号实际可用模型和协议为准。冷咖啡、寒霜、Kimi 和 AI-Jailbreak 正文均为内联请求文本，代理不会安装本地 Skill、工具或客户端配置，也不会伪造工具执行结果。实际模型行为须在使用的中转站验证。
 
 AI-Jailbreak 六项轻量策略使用 `aijailbreak-<精确模型 ID>-v1`，GLM 与 Grok 的适配正文分别为 2,114 和 2,014 字节 UTF-8，字节数不等于 token 数。它们是基于上游技术交付、简洁输出、不确定性和上下文续接机制编写的英文 API 适配正文，按客户端语言回答；不是原始提示词的直接复制。现有 `coldcoffee-glm-5.3-v1` 与 `coldcoffee-grok-4.7-v1` 保持不变，已有密钥不会自动切换策略版本。新增条目的可选 `metadata` 包含来源 URL、固定提交、`lightweight-api` 版本类型和 `unverified` 验证状态。本地测试确认路由、互斥和原请求保留，尚未进行真实模型效果评测。
 
-本次评估保留其他系列：DeepSeek 候选要求先输出重写请求并固定首轮结构，可能改变客户端的 JSON 或工具工作流；GPT、Claude、Gemini 和 Kimi 候选缺少现有精确型号的效果证据；通用候选也未证明优于现有默认策略。它们不在本版本中替换现有策略，评估范围记录于 [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json)。
+此前 AI-Jailbreak 评估保留其他系列：DeepSeek 候选要求先输出重写请求并固定首轮结构，可能改变客户端的 JSON 或工具工作流；GPT、Claude、Gemini 和 Kimi 候选缺少现有精确型号的效果证据；通用候选也未证明优于现有默认策略。这些 AI-Jailbreak 候选不替换现有策略，评估范围记录于 [profiles/ai-jailbreak/SOURCE.json](profiles/ai-jailbreak/SOURCE.json)。
 
 调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配当前客户端密钥的策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；只有多个匹配账号时才启用连续失败冷却，单账号池不会冻结。某请求对应的账号池全部进入冷却后，调度会同时清除该池冷却并重新轮询；若再次全部失败，会按相同规则循环。冷却时间到期的账号也会正常恢复。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
 
@@ -376,7 +378,13 @@ docker compose start
 
 ### 版本记录与旧版迁移
 
-当前版本 **v0.13.3** 为聊天气泡展示模型返回的思考过程；保留 **v0.13.2** 的服务商导入状态修复和 New API 令牌兼容，以及 **v0.13.1** 的聊天布局。界面延续 **v0.10.0 樱花布丁** 主题。
+当前版本 **v0.13.4** 更新 GPT 专用策略至冷咖啡当前 Codex 席位，保留原有模型绑定与策略 ID；默认策略及其他模型家族不变。保留 **v0.13.3** 的聊天思考过程、**v0.13.2** 的服务商兼容修复及 **v0.13.1** 的聊天布局。界面延续 **v0.10.0 樱花布丁** 主题。
+
+#### v0.13.4 冷咖啡 GPT 策略更新
+
+- 三个现有 GPT 策略接入上游提交 `3249afce6b853ff2f2133e016b223db2cf38b087` 的 Codex 席位，保留 profile ID、精确模型匹配和已有密钥选择。
+- 共享 65,589 字节 UTF-8 API 适配正文，附来源、哈希、MIT 许可与离线校验脚本；真实模型效果标记为未实测。
+- 历史 GPT 正文保留用于旧配置兼容与默认策略来源追溯；默认策略和其他模型家族不变，无需数据库迁移。
 
 #### v0.13.3 聊天思考过程
 
@@ -537,11 +545,13 @@ You are solely responsible for complying with the laws and regulations of your j
 <details>
 <summary>展开完整第三方来源、许可声明与复现方式</summary>
 
-内置指令配置借鉴并改编自 [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)，遵循其 [MIT 许可条款](https://github.com/MDX-Tom/gpt-instruct/blob/main/LICENSE)。感谢上游作者与贡献者的开源工作。
+历史 GPT 兼容数据与默认策略来源借鉴并改编自 [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)，遵循其 [MIT 许可条款](https://github.com/MDX-Tom/gpt-instruct/blob/main/LICENSE)。感谢上游作者与贡献者的开源工作。
 
 - **上游版权：** Copyright (c) 2026 li lingbo；Copyright (c) 2026 yynxxxxx。
 - **许可保留：** 完整版权与许可声明见 [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE)，分发源码或容器时须保留本项目与上游的 MIT 声明。
-- **借鉴范围：** 这些指令是导入的配置数据，并非上游应用代码或模型实现。
+- **借鉴范围：** 历史正文保留于 [third_party/gpt-instruct/profiles.legacy.json](third_party/gpt-instruct/profiles.legacy.json)，用于识别旧配置并追溯默认策略来源；当前 GPT 专用策略已采用下述冷咖啡 Codex 来源。这些指令是导入的配置数据，并非上游应用代码或模型实现。
+
+当前三个 GPT 专用策略参考冷咖啡同一仓库的 Codex 席位，固定提交为 [`3249afce6b853ff2f2133e016b223db2cf38b087`](https://github.com/3641397194-wq/gpt6-Astra/tree/3249afce6b853ff2f2133e016b223db2cf38b087)。[third_party/coldcoffee-gpt](third_party/coldcoffee-gpt) 保留本次使用的上游原文及 [MIT 许可](third_party/coldcoffee-gpt/LICENSE)，容器中保存为 `/app/licenses/coldcoffee-gpt.LICENSE`；Copyright (c) 2026 3641397194-wq。适配将 Codex 席位及路由技能作为请求文本内联，补充 API 能力约束，省略安装器专用 IDA/MCP 和商业统一工作块；不执行上游安装器或 Skill。完整范围与离线复现方式见 [profiles/coldcoffee-gpt/SOURCE.json](profiles/coldcoffee-gpt/SOURCE.json)。
 
 Claude、Grok、Gemini、DeepSeek 和 GLM 原始 28 项扩展策略参考冷咖啡项目 [3641397194-wq/gpt6-Astra](https://github.com/3641397194-wq/gpt6-Astra)，固定版本为 [09c7799a1fc2ef5f6f6cf4223b7a48abb39d2732](https://github.com/3641397194-wq/gpt6-Astra/tree/09c7799a1fc2ef5f6f6cf4223b7a48abb39d2732)。v0.6.0 保留其中 27 项正文，DeepSeek 4.1 Flash 改用下述寒霜来源。感谢冷咖啡项目作者与贡献者。
 

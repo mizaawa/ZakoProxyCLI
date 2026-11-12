@@ -10,3 +10,8 @@ profiles/default.SOURCE.json text eol=lf
 profiles/ai-jailbreak/* text eol=lf
 third_party/ai-jailbreak/* text eol=lf whitespace=-blank-at-eof
 scripts/import-ai-jailbreak.py text eol=lf
+profiles/index.json text eol=lf
+profiles/coldcoffee-gpt/* text eol=lf
+third_party/coldcoffee-gpt/** text eol=lf whitespace=-blank-at-eof
+third_party/gpt-instruct/*.json text eol=lf
+scripts/import-coldcoffee-gpt.py text eol=lf

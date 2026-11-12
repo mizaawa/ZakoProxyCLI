@@ -1,6 +1,6 @@
 {
   "source_profile": "gpt-6-astra-v2-rc1",
-  "source_file": "profiles/index.json",
+  "source_file": "third_party/gpt-instruct/profiles.legacy.json",
   "source_instruction_sha256": "d6976b90b399b9e11df9430dd3663072288f1d858a4910b1e9d5109b3ae7e660",
   "adaptations": [
     "Generalize concrete-task execution and continuation to any model and supported API",
