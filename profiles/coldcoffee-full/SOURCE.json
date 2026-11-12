@@ -577,7 +577,7 @@
   "legacy": {
     "file": "legacy.json",
     "profiles": 42,
-    "bytes": 2103406,
-    "sha256": "7a600e8987eeebef374219ea311ba63ee3743ced6348e446f6860d3c556f41fe"
+    "bytes": 2102974,
+    "sha256": "33265fc40942bfe571b0d9863facca90c0486ccd1fbe5455a3af176aeeea40d9"
   }
 }

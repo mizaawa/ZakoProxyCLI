@@ -74,6 +74,12 @@ class ColdcoffeeFullTests(unittest.TestCase):
             self.run_import(check=False)
         self.assertEqual(legacy.read_bytes(), changed)
 
+    def test_historical_snapshot_hash_is_stable_across_line_endings(self):
+        legacy = self.target / "legacy.json"
+        content = legacy.read_bytes().replace(b"\r\n", b"\n")
+        legacy.write_bytes(content.replace(b"\n", b"\r\n"))
+        self.run_import()
+
     def test_upstream_revision_and_unknown_placeholders_fail_closed(self):
         inputs = MODULE.load_inputs(self.root)
         for template_id, path in [

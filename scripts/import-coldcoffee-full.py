@@ -17,7 +17,7 @@ import tempfile
 REPOSITORY = "https://github.com/3641397194-wq/gpt6-Astra"
 REVISION = "3249afce6b853ff2f2133e016b223db2cf38b087"
 PACKS = "desktop/src/lib/packs/"
-LEGACY_SHA256 = "7a600e8987eeebef374219ea311ba63ee3743ced6348e446f6860d3c556f41fe"
+LEGACY_SHA256 = "33265fc40942bfe571b0d9863facca90c0486ccd1fbe5455a3af176aeeea40d9"
 SEATS = {
     "codex": "GPT / Codex", "claude": "Claude", "grok": "Grok",
     "deepseek": "DeepSeek", "glm53": "GLM 5.3", "gemini": "Gemini",
@@ -174,7 +174,9 @@ def atomic_write(path, data):
 
 def import_profiles(root, checkout=None, check=False):
     target = root / "profiles/coldcoffee-full"
-    legacy = (target / "legacy.json").read_bytes()
+    # Git's text eol rules normalize the snapshot to LF in commits. Normalize
+    # local CRLF checkouts too so the immutable content hash is platform-stable.
+    legacy = (target / "legacy.json").read_bytes().replace(b"\r\n", b"\n")
     if sha256(legacy) != LEGACY_SHA256:
         raise ValueError("Historical profile snapshot hash mismatch; legacy.json must not change")
     entries = json.loads(legacy)
