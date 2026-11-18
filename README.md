@@ -277,7 +277,7 @@ curl -N http://localhost:1990/v1/responses \
 
 ## 模型与策略
 
-当前保留 **42 个固定策略、41 个唯一模型 ID**，并提供 **15 个冷咖啡模板**供实际模型显式绑定。专用策略按**映射后的实际模型 ID**精确匹配；历史重叠 ID 继续保留，同一模型的策略互斥。
+当前保留 **44 个固定策略、43 个唯一模型 ID**，并提供 **15 个冷咖啡模板**供实际模型显式绑定。专用策略按**映射后的实际模型 ID**精确匹配；历史重叠 ID 继续保留，同一模型的策略互斥。
 
 | 选择方式 | 生效条件 |
 | :--- | :--- |
@@ -292,7 +292,7 @@ curl -N http://localhost:1990/v1/responses \
 
 | 模型系列 | 精确匹配的实际模型 ID |
 | --- | --- |
-| GPT（冷咖啡 Codex） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra` |
+| GPT（冷咖啡 Codex） | `gpt-5.6-sol`、`gpt-6.1-sol`、`gpt-6-astra`、`gpt-6.2-astra`、`gpt-6.2-sol` |
 | Claude | `claude-fable-5`、`claude-fable-5-1`、`claude-haiku-4-5`、`claude-haiku-5-5`、`claude-opus-4-5`、`claude-opus-4-6`、`claude-opus-4-7`、`claude-opus-4-8`、`claude-opus-5`、`claude-opus-5-5`、`claude-sonnet-4-5`、`claude-sonnet-4-6`、`claude-sonnet-5`、`claude-sonnet-5-5` |
 | Grok | `grok-4.7`、`grok-4.6`、`grok-build` |
 | Gemini | `gemini-3-flash`、`gemini-3.1-flash-image`、`gemini-3.1-pro`、`gemini-3.1-pro-preview`、`gemini-3.6-flash`、`gemini-3.7-flash`、`gemini-3.8-flash` |
@@ -309,20 +309,22 @@ curl -N http://localhost:1990/v1/responses \
 
 v0.14.0 将 **42 个既有策略**的正文按模型家族统一更新为冷咖啡固定提交 [`3249afce6b853ff2f2133e016b223db2cf38b087`](https://github.com/3641397194-wq/gpt6-Astra/tree/3249afce6b853ff2f2133e016b223db2cf38b087) 的最新适配，保留全部 profile ID 和模型列表。历史 `hanshuang-*`、`kimi-break-*` 和 `aijailbreak-*` ID 继续有效，显示名和来源 metadata 改为冷咖啡；已有密钥选择自动使用更新后的正文。默认策略 [profiles/default.md](profiles/default.md) 保持不变，无需数据库结构迁移。
 
+v0.14.1 将当前来源固定到 [`86997bffc0355930918c82311e2c34aa04d2b5b8`](https://github.com/3641397194-wq/gpt6-Astra/tree/86997bffc0355930918c82311e2c34aa04d2b5b8)，新增 `gpt-6.2-astra`、`gpt-6.2-sol` 精确绑定。15 个模板正文与 v0.14.0 相同，只有来源 metadata、Codex 显示名和两项模型绑定更新；详见 [本次发布说明](docs/releases/v0.14.1.md)。
+
 密钥编辑器可先选择所属分组中启用且可用账号的**实际模型**，再从以下 **15 个模板**中选择一个。模板与模型显式绑定，适用于目录内外实际模型；不会自动启用、扩充账号的模型支持范围或按家族通配匹配。同一实际模型的固定策略与模板绑定仍互斥。
 
 | 模板组 | 模板 ID 与名称 |
 | --- | --- |
-| 11 个席位 | `codex`（GPT / Codex）、`claude`、`grok`、`deepseek`、`glm53`（GLM 5.3）、`gemini`、`doubao`（豆包）、`workbuddy`、`cursor`、`mimo`（MiniMax 3.1 Flash）、`kimi`（Kimi K3.1） |
+| 11 个席位 | `codex`（GPT-6.2 Astra / Sol）、`claude`、`grok`、`deepseek`、`glm53`（GLM 5.3）、`gemini`、`doubao`（豆包）、`workbuddy`、`cursor`、`mimo`（MiniMax 3.1 Flash）、`kimi`（Kimi K3.1） |
 | 4 个协作模板 | `grok-bot`、`claude-duet`、`chatgpt-dot`、`meta-muse` |
 
 这些名称描述上游提示词模板，不是新增的模型 API ID。Cursor 与 WorkBuddy 是客户端工作流；`mimo` 是上游 MiniMax 模板的历史标识，不能视为小米 MiMo；Meta Muse 上游使用 Gemini。应根据账号真实返回的模型 ID 选择绑定，并在所用服务上验证适用性。
 
-登录后的 `GET /api/profile-templates` 只返回模板名称与来源等 metadata，不返回正文；`GET /api/profiles` 保留 42 个固定条目，并补充已保存密钥引用的有效模板绑定。绑定 ID 格式为 `coldcoffee@模板ID@实际模型UTF-8字节的小写十六进制`，详见 [API 契约](API_CONTRACT.md)。新密钥仍以空选择、默认策略关闭开始。
+登录后的 `GET /api/profile-templates` 只返回模板名称与来源等 metadata，不返回正文；`GET /api/profiles` 包含 44 个固定条目，并补充已保存密钥引用的有效模板绑定。绑定 ID 格式为 `coldcoffee@模板ID@实际模型UTF-8字节的小写十六进制`，详见 [API 契约](API_CONTRACT.md)。新密钥仍以空选择、默认策略关闭开始。
 
 正文与逐文件字节数、SHA-256、适配范围记录于 [profiles/coldcoffee-full/SOURCE.json](profiles/coldcoffee-full/SOURCE.json)，模板目录见 [profiles/coldcoffee-full/templates.json](profiles/coldcoffee-full/templates.json)。`python scripts/import-coldcoffee-full.py --check` 可完全离线核验。正文会占用上下文并增加输入 token，字节数不等于 token 数。所有模板的 `validation` 均为 `unverified`；本地测试验证配置、路由和协议透传，不证明真实模型效果。
 
-所有正文均作为请求文本内联，代理不会安装上游本地 Skill、工具或客户端配置，也不会伪造工具结果。历史来源及原文保留用于追溯和旧配置识别，包括 [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json)；历史寒霜、kimi-break、AI-Jailbreak 等正文不再代表 v0.14.0 的当前专用策略。
+所有正文均作为请求文本内联，代理不会安装上游本地 Skill、工具或客户端配置，也不会伪造工具结果。历史来源及原文保留用于追溯和旧配置识别，包括 [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json)；历史寒霜、kimi-break、AI-Jailbreak 等正文不再代表 v0.14.1 的当前专用策略。
 
 调度仅选择匹配当前分组、协议且映射后实际模型已勾选的可用账号，未勾选任何可用模型的账号不接收请求。**优先级数字越小越先尝试**，相同优先级按账号 ID 稳定排序。单请求最多尝试 `最大重试数 + 1` 个不同账号。每次尝试都从原始客户端请求重新应用当前账号的单跳映射，再按实际模型匹配当前客户端密钥的策略；故障转移到其他账号时独立计算，不继承或叠加前一账号的策略。连接失败、HTTP 401、403、408、429 和 HTTP 5xx 可在响应开始前切换到下一账号；只有多个匹配账号时才启用连续失败冷却，单账号池不会冻结。某请求对应的账号池全部进入冷却后，调度会同时清除该池冷却并重新轮询；若再次全部失败，会按相同规则循环。冷却时间到期的账号也会正常恢复。其余 4xx 原样返回，不触发重试。流式响应已开始后中断不会重放请求。RPM 窗口、并发及冷却状态只保存在当前进程，重启后重置；同一个数据卷只运行一个实例。
 
@@ -385,7 +387,14 @@ docker compose start
 
 ### 版本记录与旧版迁移
 
-当前版本 **v0.14.0** 将全部既有专用策略更新至冷咖啡固定上游版本，并新增 15 模板与实际模型的显式绑定选择。原有策略 ID、模型列表及密钥选择保留，默认策略不变。界面延续 **v0.10.0 樱花布丁** 主题。
+当前版本 **v0.14.1** 同步冷咖啡最新上游来源与 GPT-6.2 Astra / Sol 席位标识，新增这两个模型的独立精确策略。原有 42 个策略和 15 个模板正文未变，ID、模型列表及密钥选择保留，默认策略不变。界面延续 **v0.10.0 樱花布丁** 主题。
+
+#### v0.14.1 GPT-6.2 Astra / Sol 策略同步
+
+- 核对并固定上游最新提交 `86997bffc0355930918c82311e2c34aa04d2b5b8`（2026-11-18），核对 `seat-packs.js / prompt-engine.js` 的正文生成链路，并从 `workbench-core.js` 同步 Codex 席位显示名 `GPT-6.2 Astra / Sol`，不执行上游代码。
+- 新增 `gpt-6.2-astra`、`gpt-6.2-sol` 两个独立、默认不启用的精确模型策略；沿用上游共享 Codex 正文和 80 个路由叶子，不捏造两套不同的提示词。目录现有 44 个固定策略、43 个唯一实际模型 ID。
+- 与 v0.14.0 比较，上游 15 个模板的生成正文均未变化；其余模型只同步来源 metadata，原有 42 个策略 ID、模型列表、密钥选择与默认策略保持不变。
+- 四种 API 协议继续按映射后的实际模型注入；Astra/Sol 独立选择，不互相命中。真实模型可用性仍以账号返回的模型为准，策略效果仍标记为未实测。
 
 #### v0.14.0 冷咖啡全模板与模型绑定
 
@@ -394,7 +403,7 @@ docker compose start
 - 密钥编辑器支持为所属分组可用的实际模型显式选择 15 个模板之一；同模型选择互斥，既有固定策略与新绑定适用相同校验。
 - 新增鉴权接口 `/api/profile-templates`，仅返回模板 metadata；配置与协议测试不代表模型效果，状态保持 `unverified`。
 
-以下版本记录描述各版本发布时的行为；v0.14.0 的当前策略来源以上文为准。
+以下版本记录描述各版本发布时的行为；v0.14.1 的当前策略来源以上文为准。
 
 #### v0.13.4 冷咖啡 GPT 策略更新
 
@@ -561,9 +570,9 @@ You are solely responsible for complying with the laws and regulations of your j
 <details>
 <summary>展开完整第三方来源、许可声明与复现方式</summary>
 
-当前 15 个模板与全部专用策略统一参考冷咖啡项目 [3641397194-wq/gpt6-Astra](https://github.com/3641397194-wq/gpt6-Astra)，固定提交为 [`3249afce6b853ff2f2133e016b223db2cf38b087`](https://github.com/3641397194-wq/gpt6-Astra/tree/3249afce6b853ff2f2133e016b223db2cf38b087)。[third_party/coldcoffee-full](third_party/coldcoffee-full) 保留上游原文及 [MIT 许可](third_party/coldcoffee-full/LICENSE)，Copyright (c) 2026 3641397194-wq；容器内保留 `/app/licenses/coldcoffee-full.LICENSE`。来源、适配范围及 SHA-256 见 [profiles/coldcoffee-full/SOURCE.json](profiles/coldcoffee-full/SOURCE.json)，可用 `python scripts/import-coldcoffee-full.py --check` 离线核验。
+当前 15 个模板与全部专用策略统一参考冷咖啡项目 [3641397194-wq/gpt6-Astra](https://github.com/3641397194-wq/gpt6-Astra)，固定提交为 [`86997bffc0355930918c82311e2c34aa04d2b5b8`](https://github.com/3641397194-wq/gpt6-Astra/tree/86997bffc0355930918c82311e2c34aa04d2b5b8)。[third_party/coldcoffee-full](third_party/coldcoffee-full) 保留上游原文及 [MIT 许可](third_party/coldcoffee-full/LICENSE)，Copyright (c) 2026 3641397194-wq；容器内保留 `/app/licenses/coldcoffee-full.LICENSE`。来源、适配范围及 SHA-256 见 [profiles/coldcoffee-full/SOURCE.json](profiles/coldcoffee-full/SOURCE.json)，可用 `python scripts/import-coldcoffee-full.py --check` 离线核验。
 
-下面保留历次导入的来源与许可说明，用于历史追溯及旧配置兼容；其中字节数、策略名称和行为描述对应当时版本，不代表 v0.14.0 的当前正文。历史有效目录保留于 [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json)。
+下面保留历次导入的来源与许可说明，用于历史追溯及旧配置兼容；其中字节数、策略名称和行为描述对应当时版本，不代表 v0.14.1 的当前正文。历史有效目录保留于 [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json)。
 
 历史 GPT 兼容数据与默认策略来源借鉴并改编自 [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct)，遵循其 [MIT 许可条款](https://github.com/MDX-Tom/gpt-instruct/blob/main/LICENSE)。感谢上游作者与贡献者的开源工作。
 

@@ -225,15 +225,15 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     let catalog = profiles::all();
     assert_eq!(
         catalog.len(),
-        42,
-        "expected three GPT, 27 Coldcoffee, two Hanshuang, four Kimi, and six AI-Jailbreak profiles"
+        44,
+        "expected five GPT, 27 Coldcoffee, two Hanshuang, four Kimi, and six AI-Jailbreak profiles"
     );
     assert_eq!(
         catalog
             .iter()
             .map(|profile| profile.models.len())
             .sum::<usize>(),
-        43
+        45
     );
     assert_eq!(
         catalog
@@ -241,7 +241,7 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
             .flat_map(|profile| &profile.models)
             .collect::<std::collections::HashSet<_>>()
             .len(),
-        41
+        43
     );
 
     let captured = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
@@ -340,6 +340,53 @@ async fn every_coldcoffee_template_binds_exact_actual_models_on_all_protocols() 
                 template.id
             );
             assert_eq!(output, expected_body(protocol, body, model, Some(&profile)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn gpt_62_aliases_select_independent_profiles_on_all_protocols() {
+    let (_dir, state) = fixture();
+    let models = ["gpt-6.2-astra", "gpt-6.2-sol"];
+    let router = Router::new()
+        .route("/v1/responses", post(echo))
+        .route("/v1/responses/compact", post(echo))
+        .route("/v1/chat/completions", post(echo))
+        .route("/v1/messages", post(echo));
+    let (endpoint, _server) = serve(router).await;
+    add_account(
+        &state,
+        &endpoint,
+        "gpt-62",
+        models.iter().map(|model| (*model).into()).collect(),
+        [
+            ("public-astra".into(), models[0].into()),
+            ("public-sol".into(), models[1].into()),
+        ]
+        .into(),
+        &["responses", "compact", "chat", "anthropic"],
+        0,
+    );
+    for selected in models {
+        let profile = profiles::find(&format!("coldcoffee-{selected}-v1")).unwrap();
+        select_profiles(&state, vec![profile.id.clone()]);
+        for (alias, actual) in [("public-astra", models[0]), ("public-sol", models[1])] {
+            for protocol in ["responses", "compact", "chat", "anthropic"] {
+                let original = original_body(protocol, alias);
+                let (status, output) =
+                    json_response(request(&state, protocol, original.clone()).await).await;
+                assert_eq!(
+                    status,
+                    StatusCode::OK,
+                    "{selected} {protocol} {alias}: {output}"
+                );
+                let expected = if actual == selected {
+                    Some(profile.as_ref())
+                } else {
+                    None
+                };
+                assert_eq!(output, expected_body(protocol, original, actual, expected));
+            }
         }
     }
 }

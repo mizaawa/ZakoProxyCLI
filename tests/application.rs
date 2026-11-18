@@ -781,6 +781,83 @@ async fn coldcoffee_template_catalog_and_explicit_bindings_persist_and_validate(
 }
 
 #[tokio::test]
+async fn gpt_62_presets_persist_and_reject_unavailable_or_overlapping_bindings() {
+    let (dir, s) = fixture();
+    let cookie = setup(&s).await;
+    let models = ["gpt-6.2-astra", "gpt-6.2-sol"];
+    let ids: Vec<String> = models
+        .iter()
+        .map(|model| format!("coldcoffee-{model}-v1"))
+        .collect();
+    let astra_only = strategy_group(&s, &cookie, "Astra only", vec![models[0].into()]).await;
+    let (status, rejected, _) = request(
+        &s,
+        "POST",
+        "/api/keys",
+        json!({
+            "name":"Unavailable Sol", "group_id":astra_only, "profile_ids":[ids[1]]
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+    let group_id = strategy_group(
+        &s,
+        &cookie,
+        "GPT-6.2",
+        models.iter().map(|model| (*model).into()).collect(),
+    )
+    .await;
+    let (status, created, _) = request(
+        &s,
+        "POST",
+        "/api/keys",
+        json!({
+            "name":"Independent GPT-6.2", "group_id":group_id, "profile_ids":ids
+        }),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let key_id = created["id"].as_str().unwrap();
+    let path = format!("/api/keys/{key_id}");
+    let (_, before, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
+    for (model, id) in models.iter().zip(&ids) {
+        for template in ["codex", "chatgpt-dot"] {
+            let binding = format!("coldcoffee@{template}@{}", hex::encode(model));
+            for (method, target) in [("POST", "/api/keys"), ("PUT", path.as_str())] {
+                let (status, rejected, _) = request(
+                    &s,
+                    method,
+                    target,
+                    json!({
+                        "name":"Duplicate model", "group_id":group_id, "profile_ids":[id,binding]
+                    }),
+                    &cookie,
+                    "/",
+                )
+                .await;
+                assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+                assert_eq!(
+                    rejected["error"],
+                    format!("Only one instruction profile may target model {model}")
+                );
+            }
+        }
+    }
+    let (_, after, _) = request(&s, "GET", "/api/keys", Value::Null, &cookie, "/").await;
+    assert_eq!(before, after);
+    drop(s);
+    let s = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let config = s.store.config().unwrap();
+    let key = config.keys.iter().find(|key| key.id == key_id).unwrap();
+    assert_eq!(key.profile_ids, ids);
+    assert!(!key.default_strategy_enabled);
+}
+
+#[tokio::test]
 async fn overlapping_strategy_variants_are_rejected_without_mutating_keys() {
     let (_dir, s) = fixture();
     let cookie = setup(&s).await;

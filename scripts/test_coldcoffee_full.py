@@ -108,6 +108,33 @@ class ColdcoffeeFullTests(unittest.TestCase):
             self.assertNotIn("{{", text)
         self.assertEqual((self.target / "codex.md").read_bytes(), (ROOT / "profiles/coldcoffee-gpt/system.md").read_bytes())
 
+    def test_gpt_62_presets_share_the_upstream_codex_chain(self):
+        inputs = MODULE.load_inputs(self.root)
+        self.assertEqual(MODULE.codex_label(inputs), "GPT-6.2 Astra / Sol")
+        templates = json.loads((self.target / "templates.json").read_text(encoding="utf-8"))
+        codex = next(item for item in templates if item["id"] == "codex")
+        self.assertEqual(codex["name"], "冷咖啡 · GPT-6.2 Astra / Sol")
+        models = json.loads((self.target / "models.json").read_text(encoding="utf-8"))
+        self.assertEqual([item["models"] for item in models], [["gpt-6.2-astra"], ["gpt-6.2-sol"]])
+        for item in models:
+            self.assertEqual(item["id"], f"coldcoffee-{item['models'][0]}-v1")
+            self.assertEqual(item["model_family"], "gpt-6.2")
+            self.assertNotIn("instruction", item)
+        source = json.loads((self.target / "SOURCE.json").read_text(encoding="utf-8"))
+        data = (self.target / "models.json").read_bytes()
+        self.assertEqual(source["outputs"]["models.json"], {"bytes": len(data), "sha256": MODULE.sha256(data)})
+
+    def test_codex_label_follows_metadata_and_rejects_missing_or_ambiguous_seats(self):
+        inputs = MODULE.load_inputs(self.root)
+        name = "desktop/src/shared/workbench-core.js"
+        original = inputs[name]
+        inputs[name] = original.replace(b"GPT-6.2 Astra / Sol", b"Updated Codex label")
+        self.assertEqual(MODULE.codex_label(inputs), "Updated Codex label")
+        for replacement in [b"const SEATS = [];", b"const SEATS = [{id:'codex',tag:'A'}, {id:'codex',tag:'B'}];"]:
+            inputs[name] = replacement
+            with self.assertRaisesRegex(ValueError, "exactly one upstream Codex seat label"):
+                MODULE.codex_label(inputs)
+
     def test_installer_seats_use_request_guidance_and_keep_source_unchanged(self):
         for template_id in MODULE.INSTALLER_SEATS:
             original = (self.vendor / MODULE.PACKS / f"{template_id}.md").read_text(encoding="utf-8")

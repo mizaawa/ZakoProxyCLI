@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/3641397194-wq/gpt6-Astra",
-  "revision": "3249afce6b853ff2f2133e016b223db2cf38b087",
+  "revision": "86997bffc0355930918c82311e2c34aa04d2b5b8",
   "license": "MIT",
   "copyright": "Copyright (c) 2026 3641397194-wq",
   "validation": "unverified",
@@ -11,6 +11,8 @@
     "Replace installer-centric workflows for doubao, workbuddy, cursor, mimo and kimi with API delivery guidance",
     "Omit installer IDA/MCP and commercial unified-work blocks; preserve their upstream source for provenance",
     "Add truthful API capability guidance; preserve the v0.13.4 GPT payload byte for byte",
+    "Read the current Codex display label from upstream shared workbench metadata without executing JavaScript",
+    "Add separate exact-model presets for gpt-6.2-astra and gpt-6.2-sol; keep the shared Codex payload unchanged",
     "Treat all names as template labels, not API model IDs; caller must bind actual available models",
     "Preserve all 42 historical active profiles in immutable legacy.json for exact-match configuration migration"
   ],
@@ -504,8 +506,8 @@
       "sha256": "282708c02e7a1bfbfd5294d2a59b77f3b72157385aed3fb808a7af05ee9c2945"
     },
     "desktop/src/shared/workbench-core.js": {
-      "bytes": 9016,
-      "sha256": "ed65812ebeffbb34b6759d19072d4e049153b04c982d466a125ba7b4608257e6"
+      "bytes": 9010,
+      "sha256": "b9d86fd0d3637d4401d03f61428e30d5b3976e7c66a26384429595cba0669a29"
     }
   },
   "outputs": {
@@ -565,9 +567,13 @@
       "bytes": 64664,
       "sha256": "26f85f02df52d4c7d03554db21bcb2be96a83347ebb6b84c7908b929ab661e73"
     },
+    "models.json": {
+      "bytes": 377,
+      "sha256": "005590a9859a92cfc6d22deb7d60ed7d58439c54189fc2ec6ceab9fe34e2b4f1"
+    },
     "templates.json": {
-      "bytes": 1896,
-      "sha256": "bd05ba4f945a854d0b28f1b8ff71df1b8efe8c69bb77ecfc450128e17169e642"
+      "bytes": 1904,
+      "sha256": "bc40d6a581c4d9e4e5928b084d9bcf588eec8426ed170d2066a2411d1fbca670"
     },
     "workbuddy.md": {
       "bytes": 3573,

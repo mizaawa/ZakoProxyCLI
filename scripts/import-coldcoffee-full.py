@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 
 REPOSITORY = "https://github.com/3641397194-wq/gpt6-Astra"
-REVISION = "3249afce6b853ff2f2133e016b223db2cf38b087"
+REVISION = "86997bffc0355930918c82311e2c34aa04d2b5b8"
 PACKS = "desktop/src/lib/packs/"
 LEGACY_SHA256 = "33265fc40942bfe571b0d9863facca90c0486ccd1fbe5455a3af176aeeea40d9"
 SEATS = {
@@ -28,6 +28,7 @@ VARIANTS = {
     "grok-bot": "Grok Bot", "claude-duet": "Claude Duet",
     "chatgpt-dot": "ChatGPT Dot", "meta-muse": "Meta Muse",
 }
+GPT_62_MODELS = ("gpt-6.2-astra", "gpt-6.2-sol")
 INSTALLER_SEATS = {"doubao", "workbuddy", "cursor", "mimo", "kimi"}
 ROUTES = ["cha-bin-unlock", "cha-playfield", "cha-netcast", "cha-apicloud", "cha-labpipe", "cha-inkstage"]
 REFERENCE_FILES = {
@@ -98,6 +99,18 @@ def strip_installation(text, template_id):
             if count != 1:
                 raise ValueError(f"Expected one installation file label: {template_id}")
     return text
+
+
+def codex_label(inputs):
+    # Read current workbench display metadata for the API catalog.
+    # The separate seat-packs/prompt-engine rendering chain is preserved.
+    # Parse only the declared seat label; never execute upstream JavaScript.
+    text = inputs["desktop/src/shared/workbench-core.js"].decode("utf-8")
+    seats = re.search(r"const SEATS = \[(.*?)\];", text, re.DOTALL)
+    labels = re.findall(r"\{id:'codex',tag:'([^'\r\n]+)'", seats[1] if seats else "")
+    if len(labels) != 1 or not labels[0].strip():
+        raise ValueError("Expected exactly one upstream Codex seat label")
+    return labels[0]
 
 
 def render(inputs, template_id):
@@ -184,11 +197,18 @@ def import_profiles(root, checkout=None, check=False):
         raise ValueError("Expected all 42 unique historical profiles")
     inputs = load_inputs(root, checkout)
     outputs = {f"{template_id}.md": render(inputs, template_id) for template_id in [*SEATS, *VARIANTS]}
+    labels = {**SEATS, **VARIANTS, "codex": codex_label(inputs)}
     templates = [{
         "id": template_id, "name": f"冷咖啡 · {name}",
         "source_path": PACKS + (f"local-agent-skills/{template_id}.md" if template_id in VARIANTS else f"{template_id}.md"),
-    } for template_id, name in {**SEATS, **VARIANTS}.items()]
+    } for template_id, name in labels.items()]
     outputs["templates.json"] = json_bytes(templates)
+    # Explicit project model IDs, not inferred availability from upstream labels.
+    outputs["models.json"] = json_bytes([{
+        "id": f"coldcoffee-{model}-v1",
+        "name": f"冷咖啡 · {labels['codex']} · {model}",
+        "models": [model], "model_family": "gpt-6.2",
+    } for model in GPT_62_MODELS])
     source = {
         "repository": REPOSITORY, "revision": REVISION,
         "license": "MIT", "copyright": "Copyright (c) 2026 3641397194-wq",
@@ -200,6 +220,8 @@ def import_profiles(root, checkout=None, check=False):
             "Replace installer-centric workflows for doubao, workbuddy, cursor, mimo and kimi with API delivery guidance",
             "Omit installer IDA/MCP and commercial unified-work blocks; preserve their upstream source for provenance",
             "Add truthful API capability guidance; preserve the v0.13.4 GPT payload byte for byte",
+            "Read the current Codex display label from upstream shared workbench metadata without executing JavaScript",
+            "Add separate exact-model presets for gpt-6.2-astra and gpt-6.2-sol; keep the shared Codex payload unchanged",
             "Treat all names as template labels, not API model IDs; caller must bind actual available models",
             "Preserve all 42 historical active profiles in immutable legacy.json for exact-match configuration migration",
         ],
@@ -216,7 +238,7 @@ def import_profiles(root, checkout=None, check=False):
                 raise ValueError(f"Generated file differs: {path}")
         else:
             atomic_write(path, data)
-    print(f"{'Verified' if check else 'Imported'} {len(templates)} templates from {REVISION}; 42 legacy profiles preserved")
+    print(f"{'Verified' if check else 'Imported'} {len(templates)} templates from {REVISION}; 42 legacy profiles preserved; {len(GPT_62_MODELS)} GPT-6.2 presets")
     print(f"Codex: {len(outputs['codex.md'])} bytes, SHA256 {sha256(outputs['codex.md'])}")
 
 

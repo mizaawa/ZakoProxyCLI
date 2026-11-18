@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.14.0**, updating all 42 existing specific profiles to the pinned coldcoffee source and adding explicit actual-model bindings for 15 templates. Existing profile IDs, model lists, and saved key selections are retained. The general default strategy is unchanged; no database schema migration is required.
+Current release: **v0.14.1**, synchronizing the latest pinned coldcoffee provenance and GPT-6.2 Astra / Sol seat label, with two new independent exact-model profiles. All 15 template bodies and the original 42 profile IDs, model lists, and saved key selections are preserved. The general default strategy is unchanged; no database schema migration is required.
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -95,6 +95,13 @@ In account creation, **From service provider** lists existing keys with their na
 Choose **Create from provider** at the top of the key list, then manually select an available group in the second dialog. **Create** sends the server-generated name `【ZakoAI】` followed by the original group name; **Cancel** sends no creation request. On success, the dialog closes and the list refreshes. The UI snapshots fresh key IDs immediately before creation and selects the unique new, available key matching the returned name and group, excluding old same-name keys. Refresh again if visibility is delayed; multiple matching new keys require manual selection. A failed response can follow a committed upstream write, so creation is never automatically retried: refresh and confirm first.
 
 Sub2API creates a key in the selected group. New API uses unlimited quota, no expiry, no model or IP restrictions and no cross-group retry; adjust restrictions at the upstream site if needed. These are upstream credentials, distinct from local client keys used to access this relay.
+
+### v0.14.1 GPT-6.2 Astra / Sol Strategy Synchronization
+
+- Pin upstream revision `86997bffc0355930918c82311e2c34aa04d2b5b8` (2026-11-18) and check the existing `seat-packs.js / prompt-engine.js` rendering chain and derive the current Codex display label from `workbench-core.js` without executing upstream code.
+- Add independent, opt-in exact-model profiles for `gpt-6.2-astra` and `gpt-6.2-sol`, using the shared upstream Codex payload and 80 route leaves. The catalog now contains 44 fixed profiles for 43 unique actual model IDs.
+- All 15 rendered template bodies are byte-identical to v0.14.0. Other models receive provenance metadata updates only; the original 42 IDs, model lists, saved key selections, and general default strategy are unchanged.
+- Cover actual-model aliases and independent selection on Responses, Compact, Chat Completions, and Anthropic Messages. Account capabilities still determine model availability; real model effectiveness remains unverified.
 
 ### v0.14.0 Coldcoffee Templates and Explicit Model Bindings
 
@@ -195,7 +202,7 @@ The default strategy adapts task-execution and continuation mechanisms from the 
 
 | Family | Exact actual model IDs |
 | --- | --- |
-| GPT (coldcoffee Codex) | `gpt-5.6-sol`, `gpt-6.1-sol`, `gpt-6-astra` |
+| GPT (coldcoffee Codex) | `gpt-5.6-sol`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6.2-astra`, `gpt-6.2-sol` |
 | Claude | `claude-fable-5`, `claude-fable-5-1`, `claude-haiku-4-5`, `claude-haiku-5-5`, `claude-opus-4-5`, `claude-opus-4-6`, `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-4-5`, `claude-sonnet-4-6`, `claude-sonnet-5`, `claude-sonnet-5-5` |
 | Grok | `grok-4.7`, `grok-4.6`, `grok-build` |
 | Gemini | `gemini-3-flash`, `gemini-3.1-flash-image`, `gemini-3.1-pro`, `gemini-3.1-pro-preview`, `gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-3.8-flash` |
@@ -203,22 +210,24 @@ The default strategy adapts task-execution and continuation mechanisms from the 
 | GLM | `glm-5.3`, `glm-5.3-flash`, `glm-5.3-air` |
 | Kimi | `kimi-k3`, `kimi-k2.7`, `kimi-k2.7-code`, `kimi-k2.6` |
 
-The catalog retains **42 fixed profiles for 41 unique actual model IDs** and provides **15 templates** for explicit model bindings. All existing profile bodies now use the latest coldcoffee source pinned at [`3249afce6b853ff2f2133e016b223db2cf38b087`](https://github.com/3641397194-wq/gpt6-Astra/tree/3249afce6b853ff2f2133e016b223db2cf38b087), selected by family. Historical `hanshuang-*`, `kimi-break-*`, and `aijailbreak-*` IDs remain valid while their display names and metadata identify coldcoffee. Existing saved selections receive the updated text. The general default strategy remains unchanged; no database schema migration is required.
+The catalog retains **44 fixed profiles for 43 unique actual model IDs** and provides **15 templates** for explicit model bindings. All existing profile bodies now use the latest coldcoffee source pinned at [`86997bffc0355930918c82311e2c34aa04d2b5b8`](https://github.com/3641397194-wq/gpt6-Astra/tree/86997bffc0355930918c82311e2c34aa04d2b5b8), selected by family. Historical `hanshuang-*`, `kimi-break-*`, and `aijailbreak-*` IDs remain valid while their display names and metadata identify coldcoffee. Existing saved selections receive the updated text. The general default strategy remains unchanged; no database schema migration is required.
 
 In the key editor, select an **actual model** from enabled, available accounts in the key's group, then choose one of these templates. Bindings can target any eligible actual model, including models outside the fixed catalog. They do not activate automatically, add upstream model support, or match family wildcards. Fixed profiles and template bindings for the same actual model are mutually exclusive.
 
 | Template group | Template IDs and names |
 | --- | --- |
-| 11 seats | `codex` (GPT / Codex), `claude`, `grok`, `deepseek`, `glm53` (GLM 5.3), `gemini`, `doubao` (Doubao), `workbuddy`, `cursor`, `mimo` (MiniMax 3.1 Flash), `kimi` (Kimi K3.1) |
+| 11 seats | `codex` (GPT-6.2 Astra / Sol), `claude`, `grok`, `deepseek`, `glm53` (GLM 5.3), `gemini`, `doubao` (Doubao), `workbuddy`, `cursor`, `mimo` (MiniMax 3.1 Flash), `kimi` (Kimi K3.1) |
 | Four collaboration templates | `grok-bot`, `claude-duet`, `chatgpt-dot`, `meta-muse` |
 
 These names identify upstream prompt templates, not new model API IDs. Cursor and WorkBuddy are client workflows; the historical `mimo` template ID refers to MiniMax, not Xiaomi MiMo. The upstream Meta Muse template uses Gemini. Bind the actual ID returned by your provider and verify suitability with that service.
 
-Authenticated `GET /api/profile-templates` returns only template metadata, without instructions. `GET /api/profiles` returns the 42 fixed entries plus valid template bindings referenced by saved keys. A binding ID is `coldcoffee@template_id@lowercase_hex_of_actual_model_UTF8_bytes`; see the [API contract](API_CONTRACT.md). New keys still start with no profiles and the default strategy off.
+Authenticated `GET /api/profile-templates` returns only template metadata, without instructions. `GET /api/profiles` returns the 44 fixed entries plus valid template bindings referenced by saved keys. A binding ID is `coldcoffee@template_id@lowercase_hex_of_actual_model_UTF8_bytes`; see the [API contract](API_CONTRACT.md). New keys still start with no profiles and the default strategy off.
 
 [profiles/coldcoffee-full/SOURCE.json](profiles/coldcoffee-full/SOURCE.json) records source provenance, byte counts, SHA-256 hashes, and adaptations; [profiles/coldcoffee-full/templates.json](profiles/coldcoffee-full/templates.json) lists the templates. Run `python scripts/import-coldcoffee-full.py --check` to verify offline. Prompt text consumes context and input tokens; bytes are not token counts. All templates use `validation:"unverified"`: local tests establish configuration, routing, and protocol preservation, not real model effectiveness.
 
-The relay inlines prompt text without installing upstream Skills, tools, or client configuration or fabricating tool results. Historical sources remain for provenance and legacy recognition, including [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json). Historical Hanshuang, kimi-break, and AI-Jailbreak text no longer describes the active v0.14.0 specific profiles.
+In v0.14.1, all 15 rendered template bodies remain byte-identical to v0.14.0. The changes are provenance metadata, the upstream Codex display label, and the two GPT-6.2 model bindings; see the [release notes](docs/releases/v0.14.1.md).
+
+The relay inlines prompt text without installing upstream Skills, tools, or client configuration or fabricating tool results. Historical sources remain for provenance and legacy recognition, including [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json). Historical Hanshuang, kimi-break, and AI-Jailbreak text no longer describes the active v0.14.1 specific profiles.
 
 Eligible upstream accounts must match the client's group and protocol, and resolve the requested model to a selected actual model; accounts with no selected models do not receive requests. **Lower priority numbers are attempted first**; equal priorities use a stable account-ID order. Each client request uses at most `max_retries + 1` distinct upstream accounts. Every attempt starts from the original client request, applies that account's single-hop mapping, and then selects the authenticated client key's profile for its actual model. Failover resolves each account independently and never carries over or stacks a previous attempt's strategy. Transport failures, HTTP 401, 403, 408, 429, and HTTP 5xx permit failover before a response starts. Cooldown applies only when multiple matching accounts are available; a single-account pool never freezes. When every account eligible for a request is cooling down, the scheduler clears cooldown for that pool and polls it again; if all accounts fail again, the same cycle repeats. Other 4xx responses are returned without failover. Active streaming responses are not replayed if they fail midway. RPM windows, concurrency counters, and cooldown state are process-local and reset on restart; run one instance per data volume.
 
@@ -296,9 +305,9 @@ Frontend dependency notices, including Nunito's SIL Open Font License, are colle
 
 This project is released under the [MIT License](LICENSE).
 
-The current 15 templates and all specific profiles reference [3641397194-wq/gpt6-Astra](https://github.com/3641397194-wq/gpt6-Astra) at pinned commit [`3249afce6b853ff2f2133e016b223db2cf38b087`](https://github.com/3641397194-wq/gpt6-Astra/tree/3249afce6b853ff2f2133e016b223db2cf38b087). [third_party/coldcoffee-full](third_party/coldcoffee-full) retains upstream originals and the [MIT notice](third_party/coldcoffee-full/LICENSE), Copyright (c) 2026 3641397194-wq. Containers include `/app/licenses/coldcoffee-full.LICENSE`. See [profiles/coldcoffee-full/SOURCE.json](profiles/coldcoffee-full/SOURCE.json) for adaptations and SHA-256 hashes; run `python scripts/import-coldcoffee-full.py --check` for offline verification.
+The current 15 templates and all specific profiles reference [3641397194-wq/gpt6-Astra](https://github.com/3641397194-wq/gpt6-Astra) at pinned commit [`86997bffc0355930918c82311e2c34aa04d2b5b8`](https://github.com/3641397194-wq/gpt6-Astra/tree/86997bffc0355930918c82311e2c34aa04d2b5b8). [third_party/coldcoffee-full](third_party/coldcoffee-full) retains upstream originals and the [MIT notice](third_party/coldcoffee-full/LICENSE), Copyright (c) 2026 3641397194-wq. Containers include `/app/licenses/coldcoffee-full.LICENSE`. See [profiles/coldcoffee-full/SOURCE.json](profiles/coldcoffee-full/SOURCE.json) for adaptations and SHA-256 hashes; run `python scripts/import-coldcoffee-full.py --check` for offline verification.
 
-The following notices retain historical sources for provenance and legacy compatibility. Their byte counts, profile names, and behavior describe earlier releases, not active v0.14.0 text. The previous active catalog is preserved in [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json).
+The following notices retain historical sources for provenance and legacy compatibility. Their byte counts, profile names, and behavior describe earlier releases, not active v0.14.1 text. The previous active catalog is preserved in [profiles/coldcoffee-full/legacy.json](profiles/coldcoffee-full/legacy.json).
 
 Historical GPT compatibility data and the default strategy include text adapted from [MDX-Tom/gpt-instruct](https://github.com/MDX-Tom/gpt-instruct), also MIT licensed. Its required copyright and license notice is retained in [third_party/gpt-instruct.LICENSE](third_party/gpt-instruct.LICENSE). The historical text is retained in [third_party/gpt-instruct/profiles.legacy.json](third_party/gpt-instruct/profiles.legacy.json) for legacy configuration recognition and default-strategy provenance; current GPT-specific profiles use coldcoffee below. Profiles are imported configuration data, not upstream application source or a model implementation. Retain both MIT notices when redistributing source or containers.
 

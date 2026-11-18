@@ -1,0 +1,18 @@
+[
+  {
+    "id": "coldcoffee-gpt-6.2-astra-v1",
+    "name": "冷咖啡 · GPT-6.2 Astra / Sol · gpt-6.2-astra",
+    "models": [
+      "gpt-6.2-astra"
+    ],
+    "model_family": "gpt-6.2"
+  },
+  {
+    "id": "coldcoffee-gpt-6.2-sol-v1",
+    "name": "冷咖啡 · GPT-6.2 Astra / Sol · gpt-6.2-sol",
+    "models": [
+      "gpt-6.2-sol"
+    ],
+    "model_family": "gpt-6.2"
+  }
+]

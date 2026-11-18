@@ -26,7 +26,7 @@ pub struct ProfileMetadata {
     pub validation: String,
 }
 
-const COLDCOFFEE_REVISION: &str = "3249afce6b853ff2f2133e016b223db2cf38b087";
+const COLDCOFFEE_REVISION: &str = "86997bffc0355930918c82311e2c34aa04d2b5b8";
 
 #[derive(Deserialize, Serialize)]
 pub struct ProfileTemplate {
@@ -125,7 +125,8 @@ fn template_instruction(template: &'static ProfileTemplate, model: &str) -> &'st
 
 pub fn model_family(model: &str) -> Option<&'static str> {
     [
-        "gpt-5.6", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm", "kimi",
+        "gpt-5.6", "gpt-6.2", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm",
+        "kimi",
     ]
     .into_iter()
     .find(|family| {
@@ -189,6 +190,10 @@ pub fn all() -> &'static [Profile] {
             .into();
             profiles.push(profile);
         }
+        let gpt_62: Vec<Profile> =
+            serde_json::from_str(include_str!("../profiles/coldcoffee-full/models.json"))
+                .expect("Embedded GPT-6.2 catalog must be valid JSON");
+        profiles.extend(gpt_62);
         let mut ids = std::collections::HashSet::new();
         for profile in &mut profiles {
             assert!(ids.insert(profile.id.clone()), "Profile IDs must be unique");
@@ -205,7 +210,7 @@ pub fn all() -> &'static [Profile] {
                 "A profile must target exactly one model family"
             );
             let seat = match family {
-                "gpt-5.6" | "gpt-6" | "gpt-6.1" => "codex",
+                "gpt-5.6" | "gpt-6" | "gpt-6.1" | "gpt-6.2" => "codex",
                 "glm" => "glm53",
                 other => other,
             };
@@ -375,7 +380,8 @@ mod tests {
     fn all_historical_selections_and_raw_presets_keep_equivalent_latest_behavior() {
         let historical: Vec<Profile> =
             serde_json::from_str(include_str!("../profiles/coldcoffee-full/legacy.json")).unwrap();
-        assert_eq!(historical.len(), all().len());
+        assert_eq!(historical.len(), 42);
+        assert_eq!(all().len(), historical.len() + 2);
         for old in historical {
             let current = find(&old.id).unwrap();
             assert_eq!(current.models, old.models);
@@ -400,6 +406,11 @@ mod tests {
             ("gpt-6-sol", Some("gpt-6")),
             ("gpt-6.1", Some("gpt-6.1")),
             ("gpt-6.1-sol", Some("gpt-6.1")),
+            ("gpt-6.2", Some("gpt-6.2")),
+            ("gpt-6.2-astra", Some("gpt-6.2")),
+            ("gpt-6.2-sol", Some("gpt-6.2")),
+            ("gpt-6.20-sol", None),
+            ("gpt-6.2astra", None),
             ("gpt-6.10-sol", None),
             ("gpt-60", None),
             ("gpt-5.60-sol", None),
@@ -429,7 +440,7 @@ mod tests {
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../profiles/coldcoffee/index.json")).unwrap();
         assert_eq!(entries.len(), 28);
-        assert_eq!(all().len(), 42);
+        assert_eq!(all().len(), 44);
         let mut models = std::collections::HashSet::new();
         for entry in entries {
             let profile = find(entry["id"].as_str().unwrap()).unwrap();
@@ -613,6 +624,53 @@ mod tests {
     }
 
     #[test]
+    fn gpt_62_presets_are_independent_exact_opt_in_bindings() {
+        let source: serde_json::Value =
+            serde_json::from_str(include_str!("../profiles/coldcoffee-full/SOURCE.json")).unwrap();
+        assert_eq!(source["revision"], COLDCOFFEE_REVISION);
+        for (model, other) in [
+            ("gpt-6.2-astra", "gpt-6.2-sol"),
+            ("gpt-6.2-sol", "gpt-6.2-astra"),
+        ] {
+            let id = format!("coldcoffee-{model}-v1");
+            let profile = find(&id).unwrap();
+            assert_eq!(profile.models, [model]);
+            assert_eq!(profile.model_family, "gpt-6.2");
+            assert!(profile.name.contains("GPT-6.2 Astra / Sol"));
+            assert_eq!(
+                profile.instruction,
+                include_str!("../profiles/coldcoffee-full/codex.md")
+            );
+            let metadata = profile.metadata.as_ref().unwrap();
+            assert_eq!(metadata.variant, "codex");
+            assert_eq!(metadata.source_revision, COLDCOFFEE_REVISION);
+            assert_eq!(metadata.validation, "unverified");
+            let group = Group {
+                profile_ids: vec![id],
+                ..Default::default()
+            };
+            assert_eq!(
+                instruction(&group, model),
+                Some(profile.instruction.as_str())
+            );
+            assert!(instruction(&Group::default(), model).is_none());
+            for unmatched in [
+                other,
+                "gpt-6.2",
+                "gpt-6-astra",
+                "gpt-6.1-sol",
+                "gpt-6.20-sol",
+                "gpt-6.2-sol-extra",
+            ] {
+                assert!(
+                    instruction(&group, unmatched).is_none(),
+                    "{model}: {unmatched}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn coldcoffee_gpt_keeps_exact_model_selection_and_legacy_settings() {
         let historical: Vec<Profile> = serde_json::from_str(include_str!(
             "../third_party/gpt-instruct/profiles.legacy.json"
@@ -631,10 +689,7 @@ mod tests {
             let metadata = profile.metadata.as_ref().unwrap();
             assert_eq!(metadata.variant, "codex");
             assert_eq!(metadata.validation, "unverified");
-            assert_eq!(
-                metadata.source_revision,
-                "3249afce6b853ff2f2133e016b223db2cf38b087"
-            );
+            assert_eq!(metadata.source_revision, COLDCOFFEE_REVISION);
             let group: Group = serde_json::from_value(serde_json::json!({
                 "name":"Historical GPT", "models":old.models, "instruction":old.instruction
             }))
