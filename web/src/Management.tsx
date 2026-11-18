@@ -21,7 +21,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, copy, errorMessage, number, time, tokenCount } from "./api";
-import type { Account, Group, Profile, ProfileTemplate, ProviderBinding, ProxyTestResult, RelayKey, State } from "./api";
+import type { Account, Group, Profile, ProfileTemplate, ProviderBinding, ProxyTestResult, RelayKey, KeyInfo } from "./api";
 import {
   Badge,
   Button,
@@ -38,15 +38,13 @@ import {
   Toggle,
 } from "./components";
 import type { Notice } from "./components";
+import { keyListPath, ResourceStatus, useResource, useResources } from "./resources";
 import { GroupSelect } from "./GroupSelect";
 import { ProviderAccountImport } from "./ProviderAccountImport";
 import type { ProviderAccountSelection } from "./ProviderAccountImport";
 
-export type PageProps = {
-  state: State;
-  reload: () => Promise<void>;
-  notify: Notice;
-};
+type Actions = { notify: Notice; reload: () => void };
+const none: never[] = [];
 
 const modelNameOrder = new Intl.Collator("en", {
   numeric: true,
@@ -63,7 +61,7 @@ function DeleteDialog({
   resource: "groups" | "accounts" | "keys";
   item: { id: string; name: string };
   onClose: () => void;
-  reload: () => Promise<void>;
+  reload: () => void;
   notify: Notice;
 }) {
   const [busy, setBusy] = useState(false);
@@ -74,7 +72,7 @@ function DeleteDialog({
     setError("");
     try {
       await api(`/${resource}/${item.id}`, "DELETE");
-      await reload();
+      reload();
       onClose();
       notify(`${label}已删除`);
     } catch (failure) {
@@ -103,7 +101,7 @@ function PageHeading({
 }: {
   eyebrow: string;
   title: string;
-  count: number;
+  count?: number;
   children: React.ReactNode;
 }) {
   return (
@@ -112,7 +110,7 @@ function PageHeading({
         <div className="eyebrow">{eyebrow}</div>
         <h1>
           {title}
-          <span className="title-count">{count}</span>
+          <span className="title-count">{count ?? "—"}</span>
         </h1>
       </div>
       {children}
@@ -120,14 +118,25 @@ function PageHeading({
   );
 }
 
+// Keep search and dialogs responsive: filter the full list, mount only one page of rows.
+function useTablePage<T>(items: T[], filter: string) {
+  const [selection, setSelection] = useState({ filter, page: 1 });
+  const pages = Math.max(1, Math.ceil(items.length / 50));
+  const page = selection.filter === filter ? Math.min(selection.page, pages) : 1;
+  return { rows: items.slice((page - 1) * 50, page * 50), page, pages,
+    changePage: (next: number) => setSelection({ filter, page: next }) };
+}
+
 function TableFooter({
   count,
   total,
   noun,
+  pagination,
 }: {
   count: number;
   total: number;
   noun: string;
+  pagination: { page: number; pages: number; changePage: (page: number) => void };
 }) {
   return (
     <div className="table-footer">
@@ -136,7 +145,11 @@ function TableFooter({
           ? `共 ${total} 个${noun}`
           : `筛选到 ${count} / ${total} 个${noun}`}
       </span>
-      <span>所有更改即时生效</span>
+      {pagination.pages > 1 ? <div className="table-pages">
+        <Button className="small-button" disabled={pagination.page <= 1} onClick={() => pagination.changePage(pagination.page - 1)}>上一页</Button>
+        <span aria-live="polite">{pagination.page} / {pagination.pages}</span>
+        <Button className="small-button" disabled={pagination.page >= pagination.pages} onClick={() => pagination.changePage(pagination.page + 1)}>下一页</Button>
+      </div> : <span>所有更改即时生效</span>}
     </div>
   );
 }
@@ -170,21 +183,33 @@ function profilesSupportedByGroup(groupId: string, accounts: Account[], profiles
   return profiles.filter((profile) => profile.models.some((model) => supported.has(model)));
 }
 
-export function GroupsPage({ state, reload, notify }: PageProps) {
+export function GroupsPage({ notify }: { notify: Notice }) {
+  const cache = useResources();
+  const groups = useResource<Group[]>("/groups");
+  const accounts = useResource<Account[]>("/accounts");
+  const keys = useResource<KeyInfo[]>(keyListPath);
+  const reload = () => cache.invalidate("/groups");
+  const state = { groups: groups.data ?? none, accounts: accounts.data ?? none, keys: keys.data ?? none };
+  const counts = useMemo(() => {
+    const accountsByGroup = new Map<string, number>(), keysByGroup = new Map<string, number>();
+    for (const account of accounts.data ?? none) for (const id of account.group_ids) accountsByGroup.set(id, (accountsByGroup.get(id) ?? 0) + 1);
+    for (const key of keys.data ?? none) keysByGroup.set(key.group_id, (keysByGroup.get(key.group_id) ?? 0) + 1);
+    return { accountsByGroup, keysByGroup };
+  }, [accounts.data, keys.data]);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Group | "new" | null>(null);
   const [deleting, setDeleting] = useState<Group | null>(null);
-  const filtered = state.groups.filter((group) =>
-    `${group.name} ${group.description || ""}`
-      .toLowerCase()
-      .includes(search.toLowerCase()),
-  );
+  const filtered = useMemo(() => {
+    const query = search.toLowerCase();
+    return state.groups.filter((group) => `${group.name} ${group.description || ""}`.toLowerCase().includes(query));
+  }, [state.groups, search]);
+  const pagination = useTablePage(filtered, search);
   return (
     <>
       <PageHeading
         eyebrow="ROUTING GROUPS"
         title="分组管理"
-        count={state.groups.length}
+        count={groups.data?.length}
       >
         <Button className="primary" onClick={() => setEditing("new")}>
           <Plus size={17} />
@@ -197,7 +222,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
             <FolderClosed size={19} />
           </span>
           <span>
-            分组<strong>{state.groups.length}</strong>
+            分组<strong>{groups.data?.length ?? "—"}</strong>
           </span>
         </div>
         <div>
@@ -205,7 +230,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
             <Database size={19} />
           </span>
           <span>
-            上游账号<strong>{state.accounts.length}</strong>
+            上游账号<strong>{accounts.data?.length ?? "—"}</strong>
           </span>
         </div>
         <div>
@@ -213,7 +238,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
             <KeyRound size={19} />
           </span>
           <span>
-            密钥<strong>{state.keys.length}</strong>
+            密钥<strong>{keys.data?.length ?? "—"}</strong>
           </span>
         </div>
       </div>
@@ -229,7 +254,8 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
             全部分组
           </span>
         </div>
-        {filtered.length ? (
+        <ResourceStatus queries={[groups, accounts, keys]} label="列表数据" />
+        {!groups.data ? null : filtered.length ? (
           <div className="table-scroll">
             <table>
               <thead>
@@ -242,7 +268,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((group) => {
+                {pagination.rows.map((group) => {
                   return (
                     <tr key={group.id}>
                       <td>
@@ -267,15 +293,12 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
                       </td>
                       <td className="mono">
                         {
-                          state.accounts.filter((account) =>
-                            account.group_ids.includes(group.id),
-                          ).length
+                          accounts.data ? counts.accountsByGroup.get(group.id) ?? 0 : "—"
                         }
                       </td>
                       <td className="mono">
                         {
-                          state.keys.filter((key) => key.group_id === group.id)
-                            .length
+                          keys.data ? counts.keysByGroup.get(group.id) ?? 0 : "—"
                         }
                       </td>
                       <td>
@@ -316,6 +339,7 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
           />
         )}
         <TableFooter
+          pagination={pagination}
           count={filtered.length}
           total={state.groups.length}
           noun="分组"
@@ -324,7 +348,6 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
       {editing && (
         <GroupForm
           group={editing === "new" ? undefined : editing}
-          state={state}
           reload={reload}
           notify={notify}
           onClose={() => setEditing(null)}
@@ -348,7 +371,7 @@ function GroupForm({
   reload,
   notify,
   onClose,
-}: PageProps & { group?: Group; onClose: () => void }) {
+}: Actions & { group?: Group; onClose: () => void }) {
   const [name, setName] = useState(group?.name || "");
   const [description, setDescription] = useState(group?.description || "");
   const [busy, setBusy] = useState(false);
@@ -366,7 +389,7 @@ function GroupForm({
           description: description.trim(),
         },
       );
-      await reload();
+      reload();
       onClose();
       notify(group ? "分组已更新" : "分组已创建");
     } catch (failure) {
@@ -414,19 +437,23 @@ function GroupForm({
   );
 }
 
-export function AccountsPage({ state, reload, notify }: PageProps) {
+export function AccountsPage({ notify }: { notify: Notice }) {
+  const cache = useResources();
+  const accounts = useResource<Account[]>("/accounts");
+  const groups = useResource<Group[]>("/groups");
+  const state = { accounts: accounts.data ?? none, groups: groups.data ?? none };
+  const groupNames = useMemo(() => new Map(groups.data?.map((g) => [g.id, g.name])), [groups.data]);
+  const reload = () => cache.invalidate("/accounts", "/keys", "/profiles", "/stats", "/logs", "/playground/models");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [editing, setEditing] = useState<Account | "new" | null>(null);
   const [deleting, setDeleting] = useState<Account | null>(null);
-  const filtered = state.accounts.filter(
-    (account) =>
-      `${account.name} ${account.endpoint}`
-        .toLowerCase()
-        .includes(search.toLowerCase()) &&
-      (filter === "all" ||
-        (filter === "enabled" ? account.enabled : !account.enabled)),
-  );
+  const filtered = useMemo(() => {
+    const query = search.toLowerCase();
+    return state.accounts.filter((account) => `${account.name} ${account.endpoint}`.toLowerCase().includes(query)
+      && (filter === "all" || (filter === "enabled" ? account.enabled : !account.enabled)));
+  }, [state.accounts, search, filter]);
+  const pagination = useTablePage(filtered, `${filter}:${search}`);
   const cooling = state.accounts.filter(
     (account) => (account.runtime?.cooldown_until || 0) > Date.now() / 1000,
   ).length;
@@ -435,7 +462,7 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
       <PageHeading
         eyebrow="UPSTREAM ACCOUNTS"
         title="账号管理"
-        count={state.accounts.length}
+        count={accounts.data?.length}
       >
         <Button className="primary" onClick={() => setEditing("new")}>
           <Plus size={17} />
@@ -488,7 +515,8 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
             <option value="disabled">已停用</option>
           </Select>
         </div>
-        {filtered.length ? (
+        <ResourceStatus queries={[accounts, groups]} label="列表数据" />
+        {!accounts.data ? null : filtered.length ? (
           <div className="table-scroll">
             <table>
               <thead>
@@ -503,7 +531,7 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((account) => (
+                {pagination.rows.map((account) => (
                   <tr key={account.id}>
                     <td>
                       <div className="entity-cell">
@@ -533,8 +561,7 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
                       <div className="model-badges">
                         {account.group_ids.map((id) => (
                           <Badge key={id}>
-                            {state.groups.find((group) => group.id === id)
-                              ?.name || "未知分组"}
+                            {groupNames.get(id) || "未知分组"}
                           </Badge>
                         ))}
                         {!account.group_ids.length && (
@@ -612,21 +639,23 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
           />
         )}
         <TableFooter
+          pagination={pagination}
           count={filtered.length}
           total={state.accounts.length}
           noun="账号"
         />
       </section>
-      {editing && (
+      {editing && !groups.data && <Modal title="上游账号" onClose={() => setEditing(null)} wide><ResourceStatus queries={[groups]} label="分组" /></Modal>}
+      {editing && groups.data && (
         <AccountForm
           account={editing === "new" ? undefined : editing}
           state={state}
           reload={reload}
           notify={notify}
-          onClose={() => {
+          onClose={(saved) => {
             const refreshBinding = editing !== "new" && Boolean(editing.provider_binding);
             setEditing(null);
-            if (refreshBinding) void reload().catch((failure) => notify(errorMessage(failure), true));
+            if (saved !== true && refreshBinding) reload();
           }}
         />
       )}
@@ -649,7 +678,7 @@ function AccountForm({
   reload,
   notify,
   onClose,
-}: PageProps & { account?: Account; onClose: () => void }) {
+}: Actions & { state: { groups: Group[] }; account?: Account; onClose: (saved?: boolean) => void }) {
   const [importSource, setImportSource] = useState<"api" | "provider">(account?.provider_binding ? "provider" : "api");
   const [providerBinding, setProviderBinding] = useState<ProviderBinding | null>(account?.provider_binding || null);
   const [providerReady, setProviderReady] = useState(false);
@@ -830,8 +859,8 @@ function AccountForm({
           enabled,
         },
       );
-      await reload();
-      onClose();
+      reload();
+      onClose(true);
       notify(account ? "账号已更新" : "账号已添加");
     } catch (failure) {
       setError(errorMessage(failure));
@@ -1199,7 +1228,13 @@ function AccountForm({
   );
 }
 
-export function KeysPage({ state, reload, notify }: PageProps) {
+export function KeysPage({ notify }: { notify: Notice }) {
+  const cache = useResources();
+  const keys = useResource<RelayKey[]>("/keys");
+  const groups = useResource<Group[]>("/groups");
+  const state = { keys: keys.data ?? none, groups: groups.data ?? none };
+  const groupNames = useMemo(() => new Map(groups.data?.map((g) => [g.id, g.name])), [groups.data]);
+  const reload = () => cache.invalidate("/keys", "/profiles", "/logs", "/stats", "/playground/models");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<RelayKey | "new" | null>(null);
   const [deleting, setDeleting] = useState<RelayKey | null>(null);
@@ -1217,6 +1252,7 @@ export function KeysPage({ state, reload, notify }: PageProps) {
       ),
     [state.keys, search],
   );
+  const pagination = useTablePage(filtered, search);
   async function copyKey(id: string) {
     setCopying(id);
     try {
@@ -1234,7 +1270,7 @@ export function KeysPage({ state, reload, notify }: PageProps) {
       <PageHeading
         eyebrow="API ACCESS KEYS"
         title="密钥管理"
-        count={state.keys.length}
+        count={keys.data?.length}
       >
         <Button className="primary" onClick={() => setEditing("new")}>
           <Plus size={17} />
@@ -1273,7 +1309,8 @@ export function KeysPage({ state, reload, notify }: PageProps) {
             {state.keys.filter((key) => key.enabled).length} 个已启用
           </span>
         </div>
-        {filtered.length ? (
+        <ResourceStatus queries={[keys, groups]} label="列表数据" />
+        {!keys.data ? null : filtered.length ? (
           <div className="table-scroll">
             <table>
               <thead>
@@ -1288,7 +1325,7 @@ export function KeysPage({ state, reload, notify }: PageProps) {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((key) => (
+                {pagination.rows.map((key) => (
                   <tr key={key.id}>
                     <td>
                       <div className="entity-cell">
@@ -1316,8 +1353,7 @@ export function KeysPage({ state, reload, notify }: PageProps) {
                     </td>
                     <td>
                       <Badge>
-                        {state.groups.find((group) => group.id === key.group_id)
-                          ?.name || "未知分组"}
+                        {groupNames.get(key.group_id) || "未知分组"}
                       </Badge>
                     </td>
                     <td className="numeric">
@@ -1383,15 +1419,15 @@ export function KeysPage({ state, reload, notify }: PageProps) {
           />
         )}
         <TableFooter
+          pagination={pagination}
           count={filtered.length}
           total={state.keys.length}
           noun="密钥"
         />
       </section>
       {editing && (
-        <KeyForm
+        <KeyEditor
           relayKey={editing === "new" ? undefined : editing}
-          state={state}
           reload={reload}
           notify={notify}
           onClose={() => setEditing(null)}
@@ -1451,17 +1487,33 @@ export function KeysPage({ state, reload, notify }: PageProps) {
   );
 }
 
+type KeyEditorProps = Actions & {
+  relayKey?: RelayKey; onClose: () => void; onCreated: (name: string, key: string) => void;
+};
+function KeyEditor(props: KeyEditorProps) {
+  const groups = useResource<Group[]>("/groups");
+  const accounts = useResource<Account[]>("/accounts");
+  const profiles = useResource<Profile[]>("/profiles?summary=true");
+  const templates = useResource<ProfileTemplate[]>("/profile-templates");
+  if (!groups.data || !accounts.data || !profiles.data) return (
+    <Modal title={props.relayKey ? "编辑密钥" : "创建 API 密钥"} onClose={props.onClose} wide>
+      <ResourceStatus queries={[groups, accounts, profiles]} label="密钥选项" />
+    </Modal>
+  );
+  return <KeyForm {...props} state={{ groups: groups.data, accounts: accounts.data, profiles: profiles.data }} templatesQuery={templates} />;
+}
+
 function KeyForm({
   relayKey,
   state,
+  templatesQuery,
   reload,
   notify,
   onClose,
   onCreated,
-}: PageProps & {
-  relayKey?: RelayKey;
-  onClose: () => void;
-  onCreated: (name: string, key: string) => void;
+}: KeyEditorProps & {
+  state: { groups: Group[]; accounts: Account[]; profiles: Profile[] };
+  templatesQuery: ReturnType<typeof useResource<ProfileTemplate[]>>;
 }) {
   const [name, setName] = useState(relayKey?.name || "");
   const [group, setGroup] = useState(
@@ -1473,9 +1525,9 @@ function KeyForm({
     relayKey?.default_strategy_enabled ?? false,
   );
   const [profileSearch, setProfileSearch] = useState("");
-  const [templates, setTemplates] = useState<ProfileTemplate[]>([]);
+  const templates = templatesQuery.data ?? none;
   const [templateError, setTemplateError] = useState("");
-  const [templateLoading, setTemplateLoading] = useState(true);
+  const templateLoading = !templatesQuery.data && templatesQuery.loading;
   const [templateId, setTemplateId] = useState("");
   const [templateModel, setTemplateModel] = useState("");
   const [localProfiles, setLocalProfiles] = useState<Profile[]>([]);
@@ -1490,14 +1542,6 @@ function KeyForm({
     () => [...supportedModelsForGroup(group, state.accounts)].sort(modelNameOrder.compare),
     [group, state.accounts],
   );
-  useEffect(() => {
-    let active = true;
-    void api<ProfileTemplate[]>("/profile-templates")
-      .then((items) => { if (active) setTemplates(items); })
-      .catch((failure) => { if (active) setTemplateError(errorMessage(failure)); })
-      .finally(() => { if (active) setTemplateLoading(false); });
-    return () => { active = false; };
-  }, []);
   const selectedGroup = state.groups.find((item) => item.id === group);
   const supportedProfiles = useMemo(
     () => profilesSupportedByGroup(group, state.accounts, availableProfiles),
@@ -1560,7 +1604,7 @@ function KeyForm({
     const id = `coldcoffee@${template.id}@${encoded}`;
     const profile: Profile = {
       id, name: `${template.name} · ${templateModel}`, models: [templateModel],
-      model_family: "custom", instruction: "",
+      model_family: "custom",
       metadata: { source_url: template.source_url, source_revision: template.source_revision,
         variant: template.id, validation: template.validation },
     };
@@ -1591,7 +1635,7 @@ function KeyForm({
           default_strategy_enabled: defaultStrategyEnabled,
         },
       );
-      await reload();
+      reload();
       onClose();
       if (result.key) onCreated(name, result.key);
       else notify("密钥已更新");
@@ -1657,7 +1701,8 @@ function KeyForm({
             </div>
             {!actualModels.length && <p className="field-hint">请先在此分组的已启用账号中配置模型。</p>}
             <p className="field-hint">应用后替换该模型已选的策略，保存密钥后生效。</p>
-            {templateError && <ErrorBox message={templateError} />}
+            <ResourceStatus label="模板" queries={[templatesQuery]} />
+            <ErrorBox message={templateError} />
           </details>
           <div
             className="profile-search"

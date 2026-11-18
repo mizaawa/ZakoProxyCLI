@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
 import {
   Bot,
@@ -24,12 +24,11 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import type { State } from "./api";
+import type { Group, KeyInfo } from "./api";
+import { keyListPath, ResourceStatus, useResource } from "./resources";
 import { errorMessage } from "./api";
 import { ErrorBox } from "./components";
 import type { Notice } from "./components";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import "./playground.css";
 
 type Attachment = { kind: "text" | "image"; name: string; mime_type: string; text?: string; data_url?: string };
@@ -184,18 +183,26 @@ function Picker({ kind, label, value, options, disabled, onChange }: {
   </div>;
 }
 
-export function Playground({ state, notify }: { state: State; notify: Notice }) {
-  const enabledKeys = state.keys.filter((key) => key.enabled);
-  const [keyId, setKeyId] = useState(() => {
-    const saved = localStorage.getItem("zako-playground-key");
-    return enabledKeys.find((key) => key.id === saved)?.id || enabledKeys[0]?.id || "";
-  });
-  const selectedKey = enabledKeys.find((key) => key.id === keyId);
-  const groups = state.groups.filter((group) => enabledKeys.some((key) => key.group_id === group.id));
-  const [models, setModels] = useState<string[]>([]);
-  const [model, setModel] = useState("");
-  const [modelsBusy, setModelsBusy] = useState(false);
-  const [modelsError, setModelsError] = useState("");
+const Markdown = lazy(() => import("./ChatMarkdown"));
+const MessageText = memo(function MessageText({ text }: { text: string }) {
+  return <Suspense fallback={text}><Markdown text={text} /></Suspense>;
+});
+export function Playground({ notify }: { notify: Notice }) {
+  const keys = useResource<KeyInfo[]>(keyListPath);
+  const groupList = useResource<Group[]>("/groups");
+  const enabledKeys = useMemo(() => keys.data?.filter((key) => key.enabled) ?? [], [keys.data]);
+  const [preferredKey, setKeyId] = useState(() => localStorage.getItem("zako-playground-key") ?? "");
+  const selectedKey = enabledKeys.find((key) => key.id === preferredKey) ?? enabledKeys[0];
+  const keyId = selectedKey?.id ?? "";
+  const groups = useMemo(() => {
+    const ids = new Set(enabledKeys.map((key) => key.group_id));
+    return groupList.data?.filter((group) => ids.has(group.id)) ?? [];
+  }, [groupList.data, enabledKeys]);
+  const modelList = useResource<{ models: string[] }>(keyId ? `/playground/models?key_id=${encodeURIComponent(keyId)}` : null);
+  const models = modelList.data?.models ?? [];
+  const modelsBusy = !modelList.data && modelList.loading;
+  const [preferredModel, setModel] = useState("");
+  const model = models.includes(preferredModel) ? preferredModel : models[0] ?? "";
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("zako-playground-messages") || "[]") as unknown;
@@ -255,57 +262,30 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!enabledKeys.some((key) => key.id === keyId)) setKeyId(enabledKeys[0]?.id || "");
-  }, [enabledKeys, keyId]);
-
-  useEffect(() => {
-    if (!keyId) {
-      setModels([]);
-      setModel("");
-      return;
-    }
-    const controller = new AbortController();
-    setModelsBusy(true);
-    setModelsError("");
-    fetch(`/api/playground/models?key_id=${encodeURIComponent(keyId)}`, {
-      credentials: "same-origin",
-      headers: { "X-Console-Path": window.location.pathname },
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const body = await response.json();
-        if (response.status === 401) window.dispatchEvent(new Event("session-expired"));
-        if (!response.ok) throw new Error(responseError(body, `获取模型失败 (${response.status})`));
-        return body as { models: string[] };
-      })
-      .then(({ models: available }) => {
-        setModels(available);
-        setModel((previous) => available.includes(previous) ? previous : available[0] || "");
-      })
-      .catch((failure) => {
-        if (controller.signal.aborted) return;
-        setModels([]);
-        setModel("");
-        setModelsError(errorMessage(failure));
-      })
-      .finally(() => { if (!controller.signal.aborted) setModelsBusy(false); });
-    return () => controller.abort();
-  }, [keyId]);
-
-  useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  useEffect(() => {
-    const stored = messages.slice(-50).map(({ raw, attachments: files, ...message }) => ({
-      ...message,
-      attachments: files?.map(({ kind, name, mime_type }) => ({ kind, name, mime_type })),
+  // While streaming, checkpoint at most once a second, and flush the last frame on exit.
+  const latestMessages = useRef(messages);
+  const lastPersisted = useRef<Message[] | null>(null);
+  const persistMessages = useCallback(() => {
+    if (latestMessages.current === lastPersisted.current) return;
+    const stored = latestMessages.current.slice(-50).map(({ raw, attachments: files, ...message }) => ({
+      ...message, attachments: files?.map(({ kind, name, mime_type }) => ({ kind, name, mime_type })),
     }));
     try { localStorage.setItem("zako-playground-messages", JSON.stringify(stored)); }
-    catch { /* Storage can be full; the live conversation remains usable. */ }
-  }, [messages]);
+    catch { /* Storage may be full; keep the live conversation usable. */ }
+    lastPersisted.current = latestMessages.current;
+  }, []);
+  useEffect(() => { latestMessages.current = messages; if (!busy) persistMessages(); }, [messages, busy, persistMessages]);
+  useEffect(() => {
+    if (!busy) return;
+    const timer = window.setInterval(persistMessages, 1000);
+    window.addEventListener("pagehide", persistMessages);
+    return () => { window.clearInterval(timer); window.removeEventListener("pagehide", persistMessages); persistMessages(); };
+  }, [busy, persistMessages]);
 
-  useEffect(() => { localStorage.setItem("zako-playground-key", keyId); }, [keyId]);
+  useEffect(() => { if (keys.data) localStorage.setItem("zako-playground-key", keyId); }, [keyId, keys.data]);
 
   useEffect(() => {
     localStorage.setItem("zako-playground-settings", JSON.stringify({ systemPrompt, temperature, topP, frequencyPenalty, presencePenalty, maxTokens, seed, enabledParams, stream, searchEnabled }));
@@ -534,6 +514,7 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
 
   return (
     <div className="playground-page">
+      <ResourceStatus queries={[keys, groupList]} label="聊天配置" />
       <div className="playground-layout">
         <aside className={`playground-config ${settingsOpen ? "open" : ""}`} aria-label="游乐场设置">
           <div className="playground-panel-heading">
@@ -557,7 +538,7 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
               <span className="playground-select-wrap">
                 <Picker kind="model" label="模型" value={model} options={models.filter((name) => name.toLowerCase().includes(modelSearch.toLowerCase()) || name === model).map((name) => ({ value: name, label: name }))} disabled={!models.length || modelsBusy || busy} onChange={setModel} />
               </span>
-              {modelsError && <small className="playground-field-error">{modelsError}</small>}
+              {modelList.error && <ResourceStatus label="模型" queries={[modelList]} />}
             </label>
             <label className="playground-field">
               <span><MessageSquareText size={15} /> 系统提示词 <em>可选</em></span>
@@ -613,7 +594,7 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
                     ["获取建议", "请针对以下问题给我一些建议："],
                   ].map(([label, prompt]) => <button key={label} type="button" onClick={() => { setDraft(prompt); inputRef.current?.focus(); }}>{label}</button>)}
                 </div>
-                {!enabledKeys.length && <p className="playground-empty-note">请先在“密钥管理”中创建并启用 API 密钥。</p>}
+                {keys.data && !enabledKeys.length && <p className="playground-empty-note">请先在“密钥管理”中创建并启用 API 密钥。</p>}
                 {enabledKeys.length > 0 && !models.length && !modelsBusy && <p className="playground-empty-note">当前分组没有启用 Chat Completions 的模型。</p>}
               </div>
             ) : messages.map((message, index) => (
@@ -622,8 +603,8 @@ export function Playground({ state, notify }: { state: State; notify: Notice }) 
                 <div className="playground-message-body">
                   <div className="playground-message-meta"><strong>{message.role === "user" ? "你" : "助手"}</strong></div>
                   {message.attachments?.length ? <div className="playground-message-files">{message.attachments.map((file, fileIndex) => <span key={`${file.name}-${fileIndex}`}><Paperclip size={12} />{file.name}</span>)}</div> : null}
-                  {message.reasoning && <details className="playground-reasoning" open><summary><Sparkles size={14} /><span>思考过程</span><ChevronDown size={14} /></summary><div className="playground-reasoning-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.reasoning}</ReactMarkdown></div></details>}
-                  {message.content ? <div className="playground-message-text">{message.role === "assistant" ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : message.content}</div> : message.role === "assistant" && busy && index === messages.length - 1 ? <span className="playground-thinking"><i /><i /><i /><span>正在生成…</span></span> : null}
+                  {message.reasoning && <details className="playground-reasoning" open><summary><Sparkles size={14} /><span>思考过程</span><ChevronDown size={14} /></summary><div className="playground-reasoning-body"><MessageText text={message.reasoning} /></div></details>}
+                  {message.content ? <div className="playground-message-text">{message.role === "assistant" ? <MessageText text={message.content} /> : message.content}</div> : message.role === "assistant" && busy && index === messages.length - 1 ? <span className="playground-thinking"><i /><i /><i /><span>正在生成…</span></span> : null}
                   {message.sources?.length ? <div className="playground-sources"><strong><Globe2 size={13} /> 搜索来源</strong>{message.sources.map((source, sourceIndex) => <a key={`${source.url}-${sourceIndex}`} href={source.url} target="_blank" rel="noreferrer" title={source.snippet}>{sourceIndex + 1}. {source.title}</a>)}</div> : null}
                   {message.role === "assistant" && message.raw && <div className="playground-raw-toggle"><button type="button" onClick={() => setRawIndex(rawIndex === index ? null : index)}>{rawIndex === index ? "预览" : "原始响应"}</button>{rawIndex === index && <pre>{message.raw}</pre>}</div>}
                   {(message.content || !busy) && <div className="playground-message-actions" aria-label={`${message.role === "user" ? "你的" : "助手"}消息操作`}>

@@ -10,9 +10,11 @@ export async function api<T = unknown>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method,
+    signal,
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
@@ -37,7 +39,7 @@ export async function api<T = unknown>(
         ? failure.error
         : failure.error?.message;
     if (
-      response.status === 401 &&
+      response.status === 401 && !signal?.aborted &&
       !["/login", "/setup", "/bootstrap"].includes(path)
     )
       window.dispatchEvent(new Event("session-expired"));
@@ -214,7 +216,6 @@ export type Profile = {
   name: string;
   model_family: string;
   models: string[];
-  instruction: string;
   metadata?: {
     source_url: string;
     source_revision: string;
@@ -229,14 +230,7 @@ export type ProfileTemplate = {
   source_revision: string;
   validation: string;
 };
-export type State = {
-  groups: Group[];
-  accounts: Account[];
-  keys: RelayKey[];
-  settings: Settings;
-  profiles: Profile[];
-  username: string;
-};
+export type KeyInfo = Omit<RelayKey, "usage">;
 export type Summary = Usage & {
   uncached_tokens: number;
   total_tokens: number;
@@ -296,13 +290,11 @@ export const emptyStats: Stats = {
   accounts: { total: 0, healthy: 0, cooling: 0 },
   keys: 0,
 };
-export const number = (value = 0) =>
-  new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
-export const compact = (value = 0) =>
-  new Intl.NumberFormat("en-US", {
-    notation: "compact",
-    maximumFractionDigits: 2,
-  }).format(value);
+const integers = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+const abbreviated = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
+const timestamps = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+export const number = (value = 0) => integers.format(value);
+export const compact = (value = 0) => abbreviated.format(value);
 export const compactCount = (value = 0) => {
   const magnitude = Math.abs(value);
   if (magnitude >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}m`;
@@ -321,13 +313,7 @@ export const tokenCount = (value = 0) => {
 };
 export const percent = (value = 0) => `${value.toFixed(1)}%`;
 export const time = (value: number) =>
-  new Date(value * 1000).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  timestamps.format(value * 1000);
 export const day = (date: Date) =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 export const errorMessage = (error: unknown) =>

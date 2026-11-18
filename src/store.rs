@@ -523,6 +523,36 @@ impl Store {
         prune_logs(&db, read_config(&db)?.settings.retention_days)?;
         Ok(())
     }
+    // The key list needs only usage, not full log records, their sort order, or one scan per key.
+    pub fn usage_by_key(&self) -> Result<std::collections::HashMap<String, Usage>> {
+        #[derive(Deserialize)]
+        struct KeyUsage {
+            key_id: String,
+            usage: Usage,
+        }
+        let db = self.db.lock().map_err(|e| e.to_string())?;
+        prune_logs(&db, read_config(&db)?.settings.retention_days)?;
+        let mut query = db
+            .prepare("SELECT value FROM requests WHERE timestamp BETWEEN 0 AND ?1")
+            .map_err(|e| e.to_string())?;
+        let mut rows = query.query([now()]).map_err(|e| e.to_string())?;
+        let mut totals = std::collections::HashMap::<String, Usage>::new();
+        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
+            let raw = row
+                .get_ref(0)
+                .map_err(|e| e.to_string())?
+                .as_str()
+                .map_err(|e| e.to_string())?;
+            let log: KeyUsage = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+            let total = totals.entry(log.key_id).or_default();
+            total.input_tokens += log.usage.input_tokens;
+            total.output_tokens += log.usage.output_tokens;
+            total.cached_tokens += log.usage.cached_tokens;
+            total.cache_creation_input_tokens += log.usage.cache_creation_input_tokens;
+            total.cache_read_input_tokens += log.usage.cache_read_input_tokens;
+        }
+        Ok(totals)
+    }
     pub fn logs(&self, from: i64, to: i64) -> Result<Vec<RequestLog>> {
         let db = self.db.lock().map_err(|e| e.to_string())?;
         prune_logs(&db, read_config(&db)?.settings.retention_days)?;

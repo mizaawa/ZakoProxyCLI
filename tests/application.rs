@@ -70,6 +70,70 @@ async fn license_notices_are_served_as_plain_text() {
         "text/plain; charset=utf-8"
     );
 }
+#[tokio::test]
+async fn static_asset_compression_is_negotiated_and_entry_is_never_immutable() {
+    let (dir, state) = fixture();
+    let web = dir.path().join("web");
+    let assets = web.join("assets");
+    std::fs::create_dir_all(&assets).unwrap();
+    std::fs::write(web.join("index.html"), "entry").unwrap();
+    std::fs::write(assets.join("page-ab12CD_3.js"), "original").unwrap();
+    std::fs::write(assets.join("page-ab12CD_3.js.gz"), "precompressed").unwrap();
+    for (accept, encoded) in [("gzip", true), ("gzip;q=0", false), ("identity", false)] {
+        let req = Request::builder()
+            .uri("/assets/page-ab12CD_3.js")
+            .header("accept-encoding", accept)
+            .body(Body::empty())
+            .unwrap();
+        let res = app(state.clone()).oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()["vary"], "Accept-Encoding");
+        assert!(
+            res.headers()["cache-control"]
+                .to_str()
+                .unwrap()
+                .contains("immutable")
+        );
+        assert_eq!(res.headers().contains_key("content-encoding"), encoded);
+        assert_eq!(
+            &to_bytes(res.into_body(), 100).await.unwrap()[..],
+            if encoded {
+                &b"precompressed"[..]
+            } else {
+                &b"original"[..]
+            }
+        );
+    }
+    let res = app(state)
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.headers()["cache-control"], "no-store");
+}
+
+#[tokio::test]
+async fn profile_selector_summary_matches_full_catalog_without_instruction_bodies() {
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (status, summary, _) = request(
+        &state,
+        "GET",
+        "/api/profiles?summary=true",
+        Value::Null,
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = summary.as_array().unwrap();
+    assert_eq!(rows.len(), profiles::all().len());
+    for (row, profile) in rows.iter().zip(profiles::all()) {
+        assert_eq!(row["id"], profile.id);
+        assert_eq!(row["models"], json!(profile.models));
+        assert!(row.get("instruction").is_none());
+    }
+}
+
 async fn request(
     s: &Shared,
     method: &str,

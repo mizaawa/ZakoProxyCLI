@@ -1,8 +1,7 @@
 use crate::{
     ApiError, ApiResult, Shared, bad, profiles,
     store::{
-        Account, ApiKey, Config, Group, LOG_PAGE_SIZE, RequestLog, Settings, Usage, digest, id,
-        now, token,
+        Account, ApiKey, Config, Group, LOG_PAGE_SIZE, RequestLog, Settings, digest, id, now, token,
     },
     unauthorized,
 };
@@ -774,13 +773,28 @@ pub async fn delete_account(
     s.proxy_clients.lock().unwrap().remove(&id);
     Ok(Json(json!({"ok":true})))
 }
-pub async fn keys(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
+#[derive(Deserialize)]
+pub struct KeyListQuery {
+    usage: Option<bool>,
+}
+pub async fn keys(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Query(query): Query<KeyListQuery>,
+) -> ApiResult<Value> {
     auth(&s, &h)?;
     let c = s.store.config()?;
-    let logs = s.store.logs(0, now())?;
-    Ok(Json(Value::Array(c.keys.iter().map(|k|{
-        let mut u=Usage::default();for l in logs.iter().filter(|l|l.key_id==k.id){u.input_tokens+=l.usage.input_tokens;u.output_tokens+=l.usage.output_tokens;u.cached_tokens+=l.usage.cached_tokens;u.cache_creation_input_tokens+=l.usage.cache_creation_input_tokens;u.cache_read_input_tokens+=l.usage.cache_read_input_tokens;}
-        json!({"id":k.id,"name":k.name,"group_id":k.group_id,"profile_ids":k.profile_ids,"default_strategy_enabled":k.default_strategy_enabled,"prefix":k.prefix,"enabled":k.enabled,"created_at":k.created_at,"usage":u})
+    let usage = if query.usage != Some(false) && !c.keys.is_empty() {
+        Some(s.store.usage_by_key()?)
+    } else {
+        None
+    };
+    Ok(Json(Value::Array(c.keys.iter().map(|k| {
+        let mut key = json!({"id":k.id,"name":k.name,"group_id":k.group_id,"profile_ids":k.profile_ids,"default_strategy_enabled":k.default_strategy_enabled,"prefix":k.prefix,"enabled":k.enabled,"created_at":k.created_at});
+        if let Some(usage) = &usage {
+            key["usage"] = json!(usage.get(&k.id).cloned().unwrap_or_default());
+        }
+        key
     }).collect())))
 }
 #[derive(Deserialize)]
@@ -1291,7 +1305,16 @@ pub async fn test_proxy(
             "upstream_status":null, "error":crate::network::connection_error(&error)}),
     }))
 }
-pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
+#[derive(Deserialize)]
+pub struct ProfileListQuery {
+    #[serde(default)]
+    summary: bool,
+}
+pub async fn profiles(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Query(query): Query<ProfileListQuery>,
+) -> ApiResult<Value> {
     auth(&s, &h)?;
     let config = s.store.config()?;
     let mut catalog: Vec<_> = profiles::all()
@@ -1307,6 +1330,11 @@ pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value>
             catalog.push(profile);
         }
     }
+    if query.summary {
+        return Ok(Json(Value::Array(catalog.iter().map(|p| json!({
+            "id":p.id, "name":p.name, "models":p.models, "model_family":p.model_family, "metadata":p.metadata
+        })).collect())));
+    }
     Ok(Json(json!(catalog)))
 }
 pub async fn profile_templates(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
@@ -1317,6 +1345,7 @@ pub async fn profile_templates(State(s): State<Shared>, h: HeaderMap) -> ApiResu
 pub struct Range {
     from: Option<i64>,
     to: Option<i64>,
+    recent: Option<bool>,
 }
 pub async fn stats(
     State(s): State<Shared>,
@@ -1330,7 +1359,24 @@ pub async fn stats(
         return Err(bad("Invalid date range"));
     }
     let logs = s.store.logs(start, end)?;
-    let live = s.store.logs(now() - 60, now())?;
+    let current = now();
+    let live_start = current - 60;
+    let live_logs = if start <= live_start && end >= current {
+        None
+    } else {
+        Some(s.store.logs(live_start, current)?)
+    };
+    let (rpm, tpm) = live_logs
+        .as_deref()
+        .unwrap_or(&logs)
+        .iter()
+        .filter(|l| (live_start..=current).contains(&l.timestamp))
+        .fold((0u64, 0u64), |(count, tokens), l| {
+            (
+                count + 1,
+                tokens + l.usage.input_tokens + l.usage.output_tokens,
+            )
+        });
     let c = s.store.config()?;
     let mut input = 0u64;
     let mut output = 0u64;
@@ -1340,7 +1386,7 @@ pub async fn stats(
     let mut latency = 0u64;
     let mut successes = 0u64;
     let mut cyber = 0u64;
-    let mut daily: BTreeMap<String, Value> = BTreeMap::new();
+    let mut daily: BTreeMap<i64, Value> = BTreeMap::new();
     for l in &logs {
         input += l.usage.input_tokens;
         output += l.usage.output_tokens;
@@ -1351,11 +1397,10 @@ pub async fn stats(
         let ok = (200..300).contains(&l.status);
         successes += u64::from(ok);
         cyber += u64::from(l.cyber);
-        let date = chrono::DateTime::from_timestamp(l.timestamp, 0)
-            .unwrap_or_default()
-            .format("%Y-%m-%d")
-            .to_string();
-        let d=daily.entry(date.clone()).or_insert(json!({"date":date,"input_tokens":0,"output_tokens":0,"cached_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"total_requests":0,"success_count":0,"cyber_count":0}));
+        let d = daily.entry(l.timestamp.div_euclid(86400)).or_insert_with(|| {
+            let date = chrono::DateTime::from_timestamp(l.timestamp, 0).unwrap_or_default().format("%Y-%m-%d").to_string();
+            json!({"date":date,"input_tokens":0,"output_tokens":0,"cached_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"total_requests":0,"success_count":0,"cyber_count":0})
+        });
         for (key, n) in [
             ("input_tokens", l.usage.input_tokens),
             ("output_tokens", l.usage.output_tokens),
@@ -1384,9 +1429,9 @@ pub async fn stats(
         .iter()
         .filter(|a| a.enabled && !runtime.get(&a.id).is_some_and(|r| r.cooldown_until > now()))
         .count();
-    let recent:Vec<Value>=logs.iter().take(100).map(|l|json!({"id":l.id,"created_at":l.timestamp,"model":l.model,"account_name":c.accounts.iter().find(|a|a.id==l.account_id).map(|a|&a.name),"key_name":c.keys.iter().find(|k|k.id==l.key_id).map(|k|&k.name),"status":l.status,"latency_ms":l.latency_ms,"first_token_ms":l.first_token_ms,"input_tokens":l.usage.input_tokens,"output_tokens":l.usage.output_tokens,"cached_tokens":l.usage.cached_tokens,"cache_creation_input_tokens":l.usage.cache_creation_input_tokens,"cache_read_input_tokens":l.usage.cache_read_input_tokens,"cyber_count":u8::from(l.cyber),"attempts":l.attempts,"protocol":l.protocol})).collect();
+    let recent:Vec<Value>=logs.iter().take(if range.recent == Some(false) { 0 } else { 100 }).map(|l|json!({"id":l.id,"created_at":l.timestamp,"model":l.model,"account_name":c.accounts.iter().find(|a|a.id==l.account_id).map(|a|&a.name),"key_name":c.keys.iter().find(|k|k.id==l.key_id).map(|k|&k.name),"status":l.status,"latency_ms":l.latency_ms,"first_token_ms":l.first_token_ms,"input_tokens":l.usage.input_tokens,"output_tokens":l.usage.output_tokens,"cached_tokens":l.usage.cached_tokens,"cache_creation_input_tokens":l.usage.cache_creation_input_tokens,"cache_read_input_tokens":l.usage.cache_read_input_tokens,"cyber_count":u8::from(l.cyber),"attempts":l.attempts,"protocol":l.protocol})).collect();
     Ok(Json(
-        json!({"summary":{"input_tokens":input,"output_tokens":output,"cached_tokens":cached,"cache_creation_input_tokens":cache_creation,"cache_read_input_tokens":cache_read,"uncached_tokens":input.saturating_sub(cached),"total_tokens":input+output,"cache_hit_rate":if input>0{cached as f64/input as f64*100.0}else{0.0},"rpm":live.len(),"tpm":live.iter().map(|l|l.usage.input_tokens+l.usage.output_tokens).sum::<u64>(),"total_requests":logs.len(),"success_rate":if n>0.0{successes as f64/n*100.0}else{0.0},"avg_latency_ms":if n>0.0{latency as f64/n}else{0.0},"cyber_count":cyber},"daily":daily.into_values().collect::<Vec<_>>(),"recent":recent,"accounts":{"total":c.accounts.len(),"healthy":healthy,"cooling":cooling},"keys":c.keys.len()}),
+        json!({"summary":{"input_tokens":input,"output_tokens":output,"cached_tokens":cached,"cache_creation_input_tokens":cache_creation,"cache_read_input_tokens":cache_read,"uncached_tokens":input.saturating_sub(cached),"total_tokens":input+output,"cache_hit_rate":if input>0{cached as f64/input as f64*100.0}else{0.0},"rpm":rpm,"tpm":tpm,"total_requests":logs.len(),"success_rate":if n>0.0{successes as f64/n*100.0}else{0.0},"avg_latency_ms":if n>0.0{latency as f64/n}else{0.0},"cyber_count":cyber},"daily":daily.into_values().collect::<Vec<_>>(),"recent":recent,"accounts":{"total":c.accounts.len(),"healthy":healthy,"cooling":cooling},"keys":c.keys.len()}),
     ))
 }
 

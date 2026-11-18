@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, CreditCard, ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Server, ShieldCheck, Trash2, Wallet } from "lucide-react";
+import { useResource, useResources } from "./resources";
 import { api, errorMessage, time } from "./api";
 import type { ProviderAuthRequirements } from "./api";
 import { Badge, Button, Confirm, Empty, ErrorBox, Field, IconButton, Modal, ModalForm, SearchInput } from "./components";
@@ -166,7 +167,7 @@ function SecretInput({ value, onChange, placeholder, required = false, disabled 
   return <span className="provider-secret"><input type={visible ? "text" : "password"} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} required={required} disabled={disabled} autoComplete="new-password" spellCheck={false} /><IconButton title={visible ? "隐藏凭据" : "显示凭据"} onClick={() => setVisible(!visible)} disabled={disabled}>{visible ? <EyeOff size={16} /> : <Eye size={16} />}</IconButton></span>;
 }
 
-function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provider; onClose: () => void; onSaved: () => Promise<void>; notify: Notice }) {
+function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provider; onClose: () => void; onSaved: (provider: Provider) => void; notify: Notice }) {
   const [values, setValues] = useState(() => defaults(provider));
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
   const [error, setError] = useState("");
@@ -288,7 +289,6 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError(""); setBusy("save");
-    let saved = false;
     try {
       validate();
       const credentialsChanged = !canReuse || hasNewCredentials || (values.auth_mode === "token" && (values.token_type.trim() || "Bearer") !== provider?.token_type);
@@ -305,11 +305,10 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
         } finally { if (turnstileRequired) resetChallenge(); }
       }
       const result = await api<Provider>(provider ? `/providers/${provider.id}` : "/providers", provider ? "PUT" : "POST", payload(values));
-      saved = true;
-      try { await api<Provider>(`/providers/${result.id}/refresh`, "POST"); }
-      catch (failure) { notify(`服务提供商已保存，同步暂未完成：${errorMessage(failure)}`, true); await onSaved(); onClose(); return; }
-      await onSaved(); onClose(); notify(provider ? "服务提供商已更新" : "服务提供商登录成功，已添加");
-    } catch (failure) { setError(saved ? `已保存，但列表更新失败：${errorMessage(failure)}` : errorMessage(failure)); }
+      onSaved(result);
+      onClose();
+      notify(provider ? "服务提供商已更新，正在同步用量" : "服务提供商已添加，正在同步用量");
+    } catch (failure) { setError(errorMessage(failure)); }
     finally { if (turnstileRequired && turnstileToken) resetChallenge(); setBusy(null); }
   }
   return <Modal title={provider ? "编辑服务提供商" : "添加服务提供商"} subtitle="连接站点，集中查看余额与使用情况" onClose={onClose} busy={Boolean(busy)} wide>
@@ -358,53 +357,70 @@ function ProviderCard({ provider, busy, onRefresh, onEdit, onDelete }: { provide
   </article>;
 }
 
-function ProviderDelete({ provider, onClose, onDeleted, notify }: { provider: Provider; onClose: () => void; onDeleted: () => Promise<void>; notify: Notice }) {
+function ProviderDelete({ provider, onClose, onDeleted, notify }: { provider: Provider; onClose: () => void; onDeleted: () => void; notify: Notice }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   async function remove() {
     setBusy(true); setError("");
-    try { await api(`/providers/${provider.id}`, "DELETE"); await onDeleted(); onClose(); notify("服务提供商已删除"); }
+    try { await api(`/providers/${provider.id}`, "DELETE"); onDeleted(); onClose(); notify("服务提供商已删除"); }
     catch (failure) { setError(errorMessage(failure)); }
     finally { setBusy(false); }
   }
   return <Confirm title="删除服务提供商" message={`确认删除“${provider.name}”？此操作会移除本地保存的站点与登录凭据，不会删除服务提供商站点中的账号或余额。`} busy={busy} error={error} onClose={onClose} onConfirm={() => void remove()} />;
 }
 
-export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revision?: number; notify: Notice; onLoadingChange?: (loading: boolean) => void }) {
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+export function ProvidersPage({ notify }: { notify: Notice }) {
+  const cache = useResources();
+  const { data, loading, error, load } = useResource<Provider[]>("/providers");
+  const providers = data ?? [];
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [editing, setEditing] = useState<Provider | "new" | null>(null);
   const [deleting, setDeleting] = useState<Provider | null>(null);
   const [refreshing, setRefreshing] = useState<string[]>([]);
   const [refreshingAll, setRefreshingAll] = useState(false);
-  const requestId = useRef(0);
-  const reload = useCallback(async () => {
-    const request = ++requestId.current;
-    setLoading(true); setError("");
-    try { const result = await api<Provider[]>("/providers"); if (request === requestId.current) setProviders(result); }
-    catch (failure) { if (request === requestId.current) setError(errorMessage(failure)); }
-    finally { if (request === requestId.current) setLoading(false); }
-  }, []);
-  useEffect(() => { void reload(); return () => { requestId.current += 1; }; }, [revision, reload]);
-  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
+  const reload = () => load(true);
+  const changed = () => cache.invalidate("/providers", "/accounts", "/keys", "/playground/models");
+  function saveProvider(saved: Provider) {
+    const list = cache.get<Provider[]>("/providers");
+    const current = list.getSnapshot().data;
+    if (current) list.set(current.some((p) => p.id === saved.id) ? current.map((p) => p.id === saved.id ? saved : p) : [...current, saved]);
+    else void list.load(true);
+    cache.invalidate("/accounts", "/keys", "/playground/models");
+    // Successful persistence and external usage sync have separate feedback.
+    void refreshOne(saved);
+  }
   const filtered = useMemo(() => providers.filter((provider) => (filter === "all" || provider.kind === filter) && `${provider.name} ${provider.base_url} ${provider.username} ${provider.notes} ${labels[provider.kind]}`.toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))), [providers, search, filter]);
   const refreshable = providers.filter((provider) => !provider.readonly && (!provider.official || hasCredentials(provider)));
   const balances = providers.filter((provider) => provider.balance != null && Number.isFinite(provider.balance));
   const totalBalance = balances.length ? balances.reduce((sum, provider) => sum + (provider.balance || 0) * (provider.price_multiplier ?? 1), 0) : null;
   async function refresh(provider: Provider, silent = false) {
     setRefreshing((current) => [...current, provider.id]);
-    try { const result = await api<Provider>(`/providers/${provider.id}/refresh`, "POST"); setProviders((current) => current.map((item) => item.id === provider.id ? result : item)); if (!silent) notify(`${provider.name} 已同步`); return true; }
-    catch (failure) { if (!silent) notify(`${provider.name} 同步失败：${errorMessage(failure)}`, true); return false; }
+    try {
+      const result = await api<Provider>(`/providers/${provider.id}/refresh`, "POST", undefined, cache.signal);
+      const entry = cache.get<Provider[]>("/providers");
+      const current = entry.getSnapshot().data;
+      if (current) entry.set(current.map((item) => item.id === provider.id ? result : item));
+      if (!silent) notify(`${provider.name} 已同步`);
+      return true;
+    } catch (failure) {
+      if (!silent && !cache.signal.aborted) notify(`${provider.name} 同步失败：${errorMessage(failure)}`, true);
+      return false;
+    }
     finally { setRefreshing((current) => current.filter((id) => id !== provider.id)); }
   }
-  async function refreshOne(provider: Provider) { const ok = await refresh(provider); if (!ok) await reload(); }
+  async function refreshOne(provider: Provider) { const ok = await refresh(provider); if (!ok && !cache.signal.aborted) await reload(); }
   async function refreshAll() {
     setRefreshingAll(true);
     let success = 0;
-    try { for (const provider of refreshable) if (await refresh(provider, true)) success += 1; await reload(); notify(success === refreshable.length ? "已配置的服务提供商已同步" : `已同步 ${success} / ${refreshable.length} 个服务提供商，失败站点保留上次数据`, success !== refreshable.length); }
+    try {
+      // Bound external I/O; one slow site should not hold up all the others.
+      let next = 0;
+      const worker = async () => { while (!cache.signal.aborted && next < refreshable.length) if (await refresh(refreshable[next++], true)) success++; };
+      await Promise.all(Array.from({ length: Math.min(3, refreshable.length) }, worker));
+      if (cache.signal.aborted) return;
+      await reload();
+      notify(success === refreshable.length ? "已配置的服务提供商已同步" : `已同步 ${success} / ${refreshable.length} 个服务提供商，失败站点保留上次数据`, success !== refreshable.length); }
     finally { setRefreshingAll(false); }
   }
   return <>
@@ -412,9 +428,9 @@ export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revis
     <div className="list-summary provider-overview"><div><span className="summary-icon"><Server size={19} /></span><span>服务提供商<strong>{providers.length}</strong></span></div><div><span className="summary-icon"><ShieldCheck size={19} /></span><span>已连接<strong>{providers.filter((provider) => provider.status === "connected").length}<small> / {providers.length}</small></strong></span></div><div className="provider-balance-summary"><span className="summary-icon"><Wallet size={19} /></span><span>余额总计<strong>{money(totalBalance, "CNY")}</strong></span></div></div>
     <div className="provider-list-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="搜索站点名称、地址或备注…" /><div className="provider-toolbar-options"><ProviderPlatformFilter value={filter} onChange={setFilter} /><Button onClick={() => void refreshAll()} busy={refreshingAll} disabled={loading || refreshable.length === 0 || refreshing.length > 0}>{!refreshingAll && <RefreshCw size={15} />}全部刷新</Button></div></div>
     {error && <div className="provider-load-error"><ErrorBox message={error} /><Button className="small-button" onClick={() => void reload()} busy={loading}>重新加载</Button></div>}
-    {loading && providers.length === 0 ? <div className="provider-loading" role="status"><LoaderCircle size={22} className="spin" /><span>正在加载服务提供商…</span></div> : filtered.length ? <div className="provider-list" aria-busy={loading || refreshingAll}>{filtered.map((provider) => <ProviderCard key={provider.id} provider={provider} busy={refreshing.includes(provider.id)} onRefresh={() => void refreshOne(provider)} onEdit={() => setEditing(provider)} onDelete={() => setDeleting(provider)} />)}</div> : !error && <section className="data-section provider-empty"><Empty title={search || filter !== "all" ? "没有匹配的服务提供商" : "连接你的第一个服务提供商"} detail={search || filter !== "all" ? "试试其他关键词，或切换到全部平台。" : "支持 Sub2API 和 New API，登录后即可集中查看余额与消费。"} action={search || filter !== "all" ? <Button onClick={() => { setSearch(""); setFilter("all"); }}>清除筛选</Button> : <Button className="primary" onClick={() => setEditing("new")}><Plus size={16} />添加服务提供商</Button>} /></section>}
+    {loading && !data ? <div className="provider-loading" role="status"><LoaderCircle size={22} className="spin" /><span>正在加载服务提供商…</span></div> : filtered.length ? <div className="provider-list" aria-busy={loading || refreshingAll}>{filtered.map((provider) => <ProviderCard key={provider.id} provider={provider} busy={refreshing.includes(provider.id)} onRefresh={() => void refreshOne(provider)} onEdit={() => setEditing(provider)} onDelete={() => setDeleting(provider)} />)}</div> : !error && <section className="data-section provider-empty"><Empty title={search || filter !== "all" ? "没有匹配的服务提供商" : "连接你的第一个服务提供商"} detail={search || filter !== "all" ? "试试其他关键词，或切换到全部平台。" : "支持 Sub2API 和 New API，登录后即可集中查看余额与消费。"} action={search || filter !== "all" ? <Button onClick={() => { setSearch(""); setFilter("all"); }}>清除筛选</Button> : <Button className="primary" onClick={() => setEditing("new")}><Plus size={16} />添加服务提供商</Button>} /></section>}
     {providers.length > 0 && <div className="provider-list-caption"><span>共 {providers.length} 个服务提供商{filtered.length !== providers.length ? ` · 显示 ${filtered.length} 个` : ""}</span><span>金额按各站点充值倍率换算</span></div>}
-    {editing && <ProviderForm provider={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={reload} notify={notify} />}
-    {deleting && <ProviderDelete provider={deleting} onClose={() => setDeleting(null)} onDeleted={reload} notify={notify} />}
+    {editing && <ProviderForm provider={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={saveProvider} notify={notify} />}
+    {deleting && <ProviderDelete provider={deleting} onClose={() => setDeleting(null)} onDeleted={changed} notify={notify} />}
   </>;
 }

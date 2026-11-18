@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -15,37 +15,16 @@ import {
   Zap,
 } from "lucide-react";
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
-  api,
   compactCount,
   emptyStats,
-  errorMessage,
   number,
   percent,
   tokenCount,
 } from "./api";
+import { Loading, useResource } from "./resources";
 import type { Stats } from "./api";
 import { Badge, Button, ErrorBox, IconButton } from "./components";
 import type { Notice } from "./components";
-
-// Chart colours mirror the .series-* legend classes in style.css.
-const CHART = {
-  primary: "#e04c8b",
-  soft: "#ff9cc2",
-  honey: "#e9a512",
-  lilac: "#9b7be6",
-  grid: "#fbe1ec",
-  tick: "#8f6378",
-  ink: "#4a2a3d",
-} as const;
 
 function beginning(daysAgo: number) {
   const date = new Date();
@@ -53,53 +32,22 @@ function beginning(daysAgo: number) {
   return date.toISOString().slice(0, 10);
 }
 
-export function Dashboard({
-  revision,
-  notify,
-  onLoadingChange,
-}: {
-  revision: number;
-  notify: Notice;
-  onLoadingChange?: (loading: boolean) => void;
-}) {
-  const [from, setFrom] = useState(beginning(6));
-  const [to, setTo] = useState(beginning(0));
+const DashboardChart = lazy(() => import("./DashboardChart"));
+export function Dashboard({ notify }: { notify: Notice }) {
+  const [from, setFrom] = useState(() => beginning(6));
+  const [to, setTo] = useState(() => beginning(0));
   const [query, setQuery] = useState({ from, to });
-  const [stats, setStats] = useState<Stats>(emptyStats);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [retry, setRetry] = useState(0);
+  const start = Date.parse(`${query.from}T00:00:00Z`) / 1000;
+  const end = Date.parse(`${query.to}T23:59:59Z`) / 1000;
+  const { data, loading, error, load } = useResource<Stats>(`/stats?from=${start}&to=${end}&recent=false`);
+  const stats = data ?? emptyStats;
   const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
-  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
   useEffect(() => {
-    let cancelled = false;
-    const load = async (initial: boolean) => {
-      if (initial) setLoading(true);
-      try {
-        const start = Math.floor(
-          new Date(`${query.from}T00:00:00Z`).getTime() / 1000,
-        );
-        const end = Math.floor(
-          new Date(`${query.to}T23:59:59Z`).getTime() / 1000,
-        );
-        const result = await api<Stats>(`/stats?from=${start}&to=${end}`);
-        if (!cancelled) {
-          setStats(result);
-          setError("");
-        }
-      } catch (failure) {
-        if (!cancelled) setError(errorMessage(failure));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    void load(true);
-    const interval = window.setInterval(() => void load(false), 30_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [query, revision, retry]);
+    const visible = () => { if (!document.hidden) void load(); };
+    const timer = window.setInterval(() => { if (!document.hidden) void load(true); }, 30_000);
+    document.addEventListener("visibilitychange", visible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+  }, [load]);
   const chartData = useMemo(() => {
     const rows = new Map(
       stats.daily.map((row) => [row.date.slice(0, 10), row]),
@@ -204,12 +152,14 @@ export function Dashboard({
       {error && (
         <div className="inline-error">
           <ErrorBox message={error} />
-          <Button onClick={() => setRetry((value) => value + 1)}>
+          <Button onClick={() => void load(true)}>
             <RefreshCw size={15} />
             重试
           </Button>
         </div>
       )}
+      {!data && loading && <Loading label="统计数据" />}
+      {data && <>
       <div
         className={`metrics-grid ${loading ? "is-loading" : ""}`}
         aria-busy={loading}
@@ -381,123 +331,7 @@ export function Dashboard({
             )}
           </div>
           <div className="chart">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart
-                data={chartData}
-                margin={{ top: 10, right: 12, bottom: 0, left: -15 }}
-              >
-                <defs>
-                  {(["primary", "soft", "honey", "lilac"] as const).map((tone) => (
-                    <linearGradient key={tone} id={`zako-fill-${tone}`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={CHART[tone]} stopOpacity={0.32} />
-                      <stop offset="100%" stopColor={CHART[tone]} stopOpacity={0.02} />
-                    </linearGradient>
-                  ))}
-                </defs>
-                <CartesianGrid
-                  stroke={CHART.grid}
-                  strokeDasharray="4 6"
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fontSize: 11, fill: CHART.tick }}
-                  axisLine={false}
-                  tickLine={false}
-                  minTickGap={25}
-                  dy={8}
-                />
-                <YAxis
-                  tickFormatter={metric === "tokens" ? tokenCount : compactCount}
-                  tick={{ fontSize: 11, fill: CHART.tick }}
-                  axisLine={false}
-                  tickLine={false}
-                  allowDecimals={false}
-                  width={metric === "tokens" ? 72 : 60}
-                  domain={[0, "auto"]}
-                />
-                <Tooltip
-                  cursor={{ stroke: CHART.soft, strokeDasharray: "4 4" }}
-                  contentStyle={{
-                    borderRadius: 16,
-                    border: `1.5px solid ${CHART.grid}`,
-                    fontSize: 12,
-                    boxShadow: "0 12px 28px -12px rgb(214 55 122 / 35%)",
-                  }}
-                  itemStyle={{ color: CHART.ink }}
-                  formatter={(value) =>
-                    metric === "tokens" ? (
-                      <span title={number(Number(value || 0))}>
-                        {tokenCount(Number(value || 0))}
-                      </span>
-                    ) : (
-                      compactCount(Number(value || 0))
-                    )
-                  }
-                  labelStyle={{ color: CHART.tick, fontWeight: 700, marginBottom: 7 }}
-                />
-                {metric === "tokens" ? (
-                  <>
-                    <Area
-                      isAnimationActive={false}
-                      type="monotone"
-                      stackId="tokens"
-                      dataKey="uncached"
-                      name="未缓存输入"
-                      stroke={CHART.primary}
-                      fill="url(#zako-fill-primary)"
-                      fillOpacity={1}
-                      strokeWidth={2}
-                    />
-                    <Area
-                      isAnimationActive={false}
-                      type="monotone"
-                      stackId="tokens"
-                      dataKey="cached"
-                      name="缓存输入"
-                      stroke={CHART.soft}
-                      fill="url(#zako-fill-soft)"
-                      fillOpacity={1}
-                      strokeWidth={1.5}
-                    />
-                    <Area
-                      isAnimationActive={false}
-                      type="monotone"
-                      stackId="tokens"
-                      dataKey="output"
-                      name="输出"
-                      stroke={CHART.honey}
-                      fill="url(#zako-fill-honey)"
-                      fillOpacity={1}
-                      strokeWidth={1.5}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <Area
-                      isAnimationActive={false}
-                      type="monotone"
-                      dataKey="requests"
-                      name="总请求"
-                      stroke={CHART.primary}
-                      fill="url(#zako-fill-primary)"
-                      fillOpacity={1}
-                      strokeWidth={2}
-                    />
-                    <Area
-                      isAnimationActive={false}
-                      type="monotone"
-                      dataKey="cyber"
-                      name="Cyber 事件"
-                      stroke={CHART.lilac}
-                      fill="url(#zako-fill-lilac)"
-                      fillOpacity={1}
-                      strokeWidth={1.5}
-                    />
-                  </>
-                )}
-              </AreaChart>
-            </ResponsiveContainer>
+            <Suspense fallback={<Loading label="图表" />}><DashboardChart data={chartData} metric={metric} /></Suspense>
           </div>
           <div className="chart-bottom">
             <span className="status-dot" />
@@ -576,6 +410,7 @@ export function Dashboard({
           </div>
         </section>
       </div>
+      </>}
     </>
   );
 }

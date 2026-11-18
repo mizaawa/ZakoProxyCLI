@@ -366,12 +366,24 @@ async fn cache_metrics_aggregate_without_counting_creation_as_cache_hits() {
             .unwrap();
     }
     let keys = json_body(request(&state, "GET", "/api/keys").await).await;
+    let light = json_body(request(&state, "GET", "/api/keys?usage=false").await).await;
+    let mut expected = keys.clone();
+    expected[0].as_object_mut().unwrap().remove("usage");
+    assert_eq!(light, expected);
     assert_eq!(keys[0]["usage"]["input_tokens"], 300);
     assert_eq!(keys[0]["usage"]["output_tokens"], 10);
     assert_eq!(keys[0]["usage"]["cached_tokens"], 200);
     assert_eq!(keys[0]["usage"]["cache_creation_input_tokens"], 40);
     assert_eq!(keys[0]["usage"]["cache_read_input_tokens"], 200);
     let stats = json_body(request(&state, "GET", "/api/stats").await).await;
+    let overview = json_body(request(&state, "GET", "/api/stats?recent=false").await).await;
+    assert_eq!(
+        overview["summary"]["total_tokens"],
+        stats["summary"]["total_tokens"]
+    );
+    assert_eq!(overview["daily"], stats["daily"]);
+    assert!(overview["recent"].as_array().unwrap().is_empty());
+    assert!(!stats["recent"].as_array().unwrap().is_empty());
     assert_eq!(stats["summary"]["input_tokens"], 300);
     assert_eq!(stats["summary"]["total_tokens"], 310);
     assert_eq!(stats["summary"]["uncached_tokens"], 100);

@@ -1,3 +1,4 @@
+import { useResource } from "./resources";
 import { useEffect, useId, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -206,13 +207,11 @@ export function ProviderAccountImport({ accountId, savedBinding, initialBinding,
   onReadyChange: (ready: boolean) => void;
   onLoadingChange: (loading: boolean) => void;
 }) {
-  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const { data, loading: providerLoading, error: providerError, load: loadProviders } = useResource<ProviderSummary[]>("/providers");
+  const providers = data ?? [];
   const [providerId, setProviderId] = useState(initialBinding?.provider_id || "");
   const [keyId, setKeyId] = useState(initialBinding?.key_id || "");
   const [explicitKeySelection, setExplicitKeySelection] = useState(false);
-  const [providerLoading, setProviderLoading] = useState(true);
-  const [providerError, setProviderError] = useState("");
-  const [providerRevision, setProviderRevision] = useState(0);
   const [keyData, setKeyData] = useState<ProviderAccountKeys | null>(null);
   const [keysLoading, setKeysLoading] = useState(Boolean(providerId));
   const [keysError, setKeysError] = useState("");
@@ -232,12 +231,6 @@ export function ProviderAccountImport({ accountId, savedBinding, initialBinding,
   const savedSelectionAvailable = !savedSelection || Boolean(!bindingError && (bindingData?.available || providerChangeConfirmed));
   const ready = Boolean(selectedProvider && !providerUnavailable && !creatingFor && selectedKey?.available && keyData?.endpoint && !providerLoading && !providerError && !keysLoading && !keysError && !bindingLoading && savedSelectionAvailable);
 
-  useEffect(() => {
-    let canceled = false;
-    setProviderLoading(true); setProviderError("");
-    void api<ProviderSummary[]>("/providers").then((result) => { if (!canceled) setProviders(result); }).catch((failure) => { if (!canceled) setProviderError(errorMessage(failure)); }).finally(() => { if (!canceled) setProviderLoading(false); });
-    return () => { canceled = true; };
-  }, [providerRevision]);
   useEffect(() => {
     if (!accountId) { setBindingLoading(false); return; }
     let canceled = false;
@@ -303,7 +296,7 @@ export function ProviderAccountImport({ accountId, savedBinding, initialBinding,
     setKeyRevision((value) => value + 1);
   }
   function refreshProviders() {
-    setProviderLoading(true); setProviderRevision((value) => value + 1);
+    void loadProviders(true);
     refreshKeys();
   }
   function openCreateKey() {

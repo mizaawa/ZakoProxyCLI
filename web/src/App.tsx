@@ -1,5 +1,5 @@
-import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import { Component, Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   Activity,
   ArrowRight,
@@ -24,19 +24,38 @@ import {
   X,
 } from "lucide-react";
 import { api, errorMessage } from "./api";
-import type { State, Group, Account, RelayKey, Settings, Profile } from "./api";
+import type { Settings } from "./api";
+import { ResourceCache } from "./resourceCache";
+import { Resources, Loading, keyListPath } from "./resources";
 import { Button, ErrorBox, Field, IconButton, Toast } from "./components";
 import { Dashboard } from "./Dashboard";
-import { RequestLogs } from "./RequestLogs";
-import { ProvidersPage } from "./Providers";
-import { GroupsPage, AccountsPage, KeysPage } from "./Management";
-import { SettingsPage } from "./Settings";
 import { PromoBanner } from "./PromoBanner";
 import { Mascot } from "./Mascot";
 import { useUpdateCheck } from "./useUpdateCheck";
 import { version } from "../package.json";
 
-const Playground = lazy(() => import("./Playground").then((module) => ({ default: module.Playground })));
+const loadManagement = () => import("./Management");
+const pageModules = {
+  playground: () => import("./Playground"),
+  keys: loadManagement, groups: loadManagement, accounts: loadManagement,
+  providers: () => import("./Providers"), logs: () => import("./RequestLogs"),
+  settings: () => import("./Settings"),
+};
+const Playground = lazy(() => pageModules.playground().then((m) => ({ default: m.Playground })));
+const GroupsPage = lazy(() => loadManagement().then((m) => ({ default: m.GroupsPage })));
+const AccountsPage = lazy(() => loadManagement().then((m) => ({ default: m.AccountsPage })));
+const KeysPage = lazy(() => loadManagement().then((m) => ({ default: m.KeysPage })));
+const ProvidersPage = lazy(() => pageModules.providers().then((m) => ({ default: m.ProvidersPage })));
+const RequestLogs = lazy(() => pageModules.logs().then((m) => ({ default: m.RequestLogs })));
+const SettingsPage = lazy(() => pageModules.settings().then((m) => ({ default: m.SettingsPage })));
+
+class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() {
+    return this.state.failed ? <div className="page-load-error" role="alert"><ErrorBox message="页面未能加载，请刷新后重试。" /><Button onClick={() => window.location.reload()}>重新加载</Button></div> : this.props.children;
+  }
+}
 
 declare global {
   interface Window {
@@ -59,7 +78,19 @@ const navigation = [
   { id: "settings", label: "系统设置", icon: Settings2 },
 ] as const;
 type Page = (typeof navigation)[number]["id"];
-const independentlyLoadedPages: readonly Page[] = ["dashboard", "providers", "logs"];
+function warmCode(page: Page) {
+  if (page !== "dashboard") void pageModules[page]().catch(() => {}); // Render has a retry boundary.
+}
+// Start reads alongside the page chunk, not in a waterfall after it arrives.
+const firstReads: Record<Page, string[]> = {
+  dashboard: [], playground: [keyListPath, "/groups"], keys: ["/keys", "/groups"],
+  groups: ["/groups", "/accounts", keyListPath], accounts: ["/accounts", "/groups"],
+  providers: ["/providers"], logs: ["/logs?page=1"], settings: ["/settings"],
+};
+function preparePage(page: Page, cache: ResourceCache) {
+  warmCode(page);
+  for (const path of firstReads[page]) void cache.get(path).load();
+}
 
 function Brand() {
   return (
@@ -242,109 +273,75 @@ function Authentication({
 export default function App() {
   const [initialized, setInitialized] = useState<boolean | null>(null);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
-  const [state, setState] = useState<State | null>(null);
+  const [session, setSession] = useState<{ username: string; cache: ResourceCache } | null>(null);
+  const sessionCache = useRef<ResourceCache | null>(null);
   const [page, setPage] = useState<Page>(() => {
     const stored = localStorage.getItem("zako-page");
     return navigation.some((item) => item.id === stored)
       ? (stored as Page)
       : "dashboard";
   });
-  const [pageLoading, setPageLoading] = useState(() => independentlyLoadedPages.includes(page));
-  const [pageError, setPageError] = useState("");
-  const [navigationId, setNavigationId] = useState(0);
-  const navigationSequence = useRef(0);
   const currentPage = useRef(page);
-  const stateRequestSequence = useRef(0);
+  const bootRequest = useRef<Promise<void> | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [revision, setRevision] = useState(0);
   const [updateFocusRequest, setUpdateFocusRequest] = useState(0);
-  const updateCheck = useUpdateCheck(!!state);
+  const updateCheck = useUpdateCheck(!!session);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
     null,
   );
   const notify = useCallback(
-    (text: string, isError = false) => setNotice({ text, error: isError }),
-    [],
+    (text: string, isError = false) => {
+      if (session && sessionCache.current === session.cache) setNotice({ text, error: isError });
+    },
+    [session],
   );
-  const loadState = useCallback(async () => {
-    const request = ++stateRequestSequence.current;
-    const [groups, accounts, keys, settings, profiles, bootstrap] =
-      await Promise.all([
-        api<Group[]>("/groups"),
-        api<Account[]>("/accounts"),
-        api<RelayKey[]>("/keys"),
-        api<Settings>("/settings"),
-        api<Profile[]>("/profiles"),
-        api<{ username: string; turnstile_site_key: string }>("/bootstrap"),
-      ]);
-    if (request !== stateRequestSequence.current) return;
-    setState({
-      groups,
-      accounts,
-      keys,
-      settings,
-      profiles,
-      username: bootstrap.username,
-    });
-    setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
-    setInitialized(true);
-  }, []);
-  const reportPageLoading = useCallback((pending: boolean) => {
-    if (navigationId === navigationSequence.current && page === currentPage.current) {
-      setPageLoading(pending);
-    }
-  }, [navigationId, page]);
-  async function navigate(target: Page, retry = false) {
+  function navigate(target: Page) {
     setMobileNav(false);
-    if (target === currentPage.current && !retry) return;
-    const request = ++navigationSequence.current;
+    if (target === currentPage.current || !session) return;
     currentPage.current = target;
-    setNavigationId(request);
+    preparePage(target, session.cache);
     setPage(target);
-    setPageError("");
-    setPageLoading(true);
-    if (independentlyLoadedPages.includes(target)) return;
-    try {
-      await loadState();
-    } catch (failure) {
-      if (request === navigationSequence.current) setPageError(errorMessage(failure));
-    } finally {
-      if (request === navigationSequence.current) setPageLoading(false);
-    }
   }
-  const boot = useCallback(async () => {
+  const endSession = useCallback(() => {
+    // A settings edit may have changed the next login challenge since bootstrap.
+    const settings = sessionCache.current?.get<Settings>("/settings").getSnapshot().data;
+    if (settings) setTurnstileSiteKey(settings.turnstile_enabled ? settings.turnstile_site_key : "");
+    sessionCache.current?.dispose();
+    sessionCache.current = null;
+    setSession(null);
+    setNotice(null);
+    setMobileNav(false);
+  }, []);
+  const boot = useCallback(() => {
+    if (bootRequest.current) return bootRequest.current;
     setLoading(true);
     setError("");
-    try {
-      const bootstrap = await api<{
-        initialized: boolean;
-        authenticated: boolean;
-        turnstile_site_key: string;
-      }>("/bootstrap");
-      setInitialized(bootstrap.initialized);
-      setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
-      if (bootstrap.authenticated) await loadState();
-    } catch (failure) {
-      setError(errorMessage(failure));
-    } finally {
+    const request = api<{
+      authenticated: boolean; initialized: boolean; username: string; turnstile_site_key: string;
+    }>("/bootstrap").then((info) => {
+      setInitialized(info.initialized);
+      setTurnstileSiteKey(info.turnstile_site_key || "");
+      if (info.authenticated) {
+        const cache = new ResourceCache((path, signal) => api(path, "GET", undefined, signal));
+        sessionCache.current = cache;
+        preparePage(currentPage.current, cache);
+        setSession({ username: info.username, cache });
+      }
+    }).catch((failure) => setError(errorMessage(failure))).finally(() => {
+      bootRequest.current = null;
       setLoading(false);
-    }
-  }, [loadState]);
+    });
+    bootRequest.current = request;
+    return request;
+  }, []);
   useEffect(() => {
     void boot();
-    const expired = () => {
-      stateRequestSequence.current += 1;
-      setNavigationId(++navigationSequence.current);
-      setPageLoading(independentlyLoadedPages.includes(currentPage.current));
-      setPageError("");
-      setState(null);
-    };
-    window.addEventListener("session-expired", expired);
-    return () => window.removeEventListener("session-expired", expired);
-  }, [boot]);
+    window.addEventListener("session-expired", endSession);
+    return () => window.removeEventListener("session-expired", endSession);
+  }, [boot, endSession]);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 4200);
@@ -374,8 +371,7 @@ export default function App() {
   async function refresh() {
     setRefreshing(true);
     try {
-      await loadState();
-      setRevision((value) => value + 1);
+      await session?.cache.refreshActive();
     } catch (failure) {
       notify(errorMessage(failure), true);
     } finally {
@@ -385,11 +381,7 @@ export default function App() {
   async function logout() {
     try {
       await api("/logout", "POST");
-      stateRequestSequence.current += 1;
-      setNavigationId(++navigationSequence.current);
-      setPageLoading(independentlyLoadedPages.includes(currentPage.current));
-      setPageError("");
-      setState(null);
+      endSession();
     } catch (failure) {
       notify(errorMessage(failure), true);
     }
@@ -419,15 +411,14 @@ export default function App() {
         </div>
       </div>
     );
-  if (!state)
+  if (!session)
     return (
       <>
-        <Authentication initialized={!!initialized} turnstileSiteKey={turnstileSiteKey} onSuccess={loadState} />
+        <Authentication initialized={!!initialized} turnstileSiteKey={turnstileSiteKey} onSuccess={boot} />
         {notice && <Toast {...notice} onClose={() => setNotice(null)} />}
       </>
     );
   const activePage = navigation.find((item) => item.id === page)!;
-  const props = { state, reload: loadState, notify };
   return (
     <div className={`app-shell ${mobileNav ? "mobile-nav-open" : ""}`}>
       <button
@@ -459,7 +450,9 @@ export default function App() {
               {"section" in item && <div className="nav-label">{item.section}</div>}
               <button
                 className={`nav-item ${page === item.id ? "active" : ""}`}
-                onClick={() => void navigate(item.id)}
+                onPointerEnter={() => warmCode(item.id)}
+                onFocus={() => warmCode(item.id)}
+                onClick={() => navigate(item.id)}
                 aria-current={page === item.id ? "page" : undefined}
               >
                 <item.icon size={19} strokeWidth={1.7} />
@@ -527,13 +520,13 @@ export default function App() {
             <span className="topbar-divider" />
             <IconButton
               title="刷新数据"
-              disabled={refreshing || pageLoading}
+              disabled={refreshing}
               onClick={() => void refresh()}
             >
               <RefreshCw size={17} className={refreshing ? "spin" : ""} />
             </IconButton>
-            <span className="user-avatar" title={state.username}>
-              {state.username?.slice(0, 1).toUpperCase() || "A"}
+            <span className="user-avatar" title={session.username}>
+              {session.username?.slice(0, 1).toUpperCase() || "A"}
             </span>
             <IconButton title="退出登录" onClick={() => void logout()}>
               <LogOut size={17} />
@@ -541,42 +534,22 @@ export default function App() {
           </div>
         </header>
         <main className={`main-content${page === "playground" ? " playground-main" : ""}`}>
-          {pageError && <div className="page-load-error" role="alert">
-            <ErrorBox message={`未能更新${activePage.label}：${pageError}`} />
-            <Button className="small-button" onClick={() => void navigate(page, true)}>
-              <RefreshCw size={15} />重新加载
-            </Button>
-          </div>}
-          {/* Keep page effects mounted so requests can finish while the content is hidden. */}
-          <div className="page-content" hidden={pageLoading} inert={pageLoading}>
-          {page === "dashboard" && (
-            <Dashboard revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
-          )}
-          {page === "playground" && !pageLoading && <Suspense fallback={<div className="full-loading"><LoaderCircle className="spin" size={23} />正在加载游乐场</div>}><Playground state={state} notify={notify} /></Suspense>}
-          {page === "groups" && !pageLoading && <GroupsPage {...props} />}
-          {page === "accounts" && !pageLoading && <AccountsPage {...props} />}
-          {page === "keys" && !pageLoading && <KeysPage {...props} />}
-          {page === "providers" && (
-            <ProvidersPage revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
-          )}
-          {page === "logs" && (
-            <RequestLogs revision={revision} notify={notify} state={state} onLoadingChange={reportPageLoading} />
-          )}
-          {page === "settings" && !pageLoading && (
-            <SettingsPage
-              {...props}
-              updateCheck={updateCheck}
-              updateFocusRequest={updateFocusRequest}
-            />
-          )}
+          <div className="page-content">
+            <Resources.Provider value={session.cache}>
+              <PageBoundary key={page}>
+                <Suspense fallback={<Loading label={activePage.label} />}>
+                  {page === "dashboard" && <Dashboard notify={notify} />}
+                  {page === "playground" && <Playground notify={notify} />}
+                  {page === "groups" && <GroupsPage notify={notify} />}
+                  {page === "accounts" && <AccountsPage notify={notify} />}
+                  {page === "keys" && <KeysPage notify={notify} />}
+                  {page === "providers" && <ProvidersPage notify={notify} />}
+                  {page === "logs" && <RequestLogs notify={notify} />}
+                  {page === "settings" && <SettingsPage username={session.username} notify={notify} updateCheck={updateCheck} updateFocusRequest={updateFocusRequest} />}
+                </Suspense>
+              </PageBoundary>
+            </Resources.Provider>
           </div>
-          {pageLoading && <section className="page-loading-state" aria-label={`${activePage.label}加载中`}>
-            <div className="page-loading-card" role="status" aria-live="polite" aria-atomic="true">
-              <span className="page-loading-symbol" aria-hidden="true"><LoaderCircle className="spin page-loading-spinner" size={42} strokeWidth={1.6} /></span>
-              <strong>正在加载{activePage.label}</strong>
-              <span>正在获取最新数据，请稍候…</span>
-            </div>
-          </section>}
         </main>
         <footer className="workspace-footer">
           <span>ZAKO API RELAY</span>

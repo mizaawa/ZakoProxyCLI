@@ -11,8 +11,8 @@ pub mod update;
 use axum::{
     Router,
     body::Body,
-    extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode, Uri},
+    extract::{DefaultBodyLimit, Request, State},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
 };
@@ -230,33 +230,37 @@ pub fn app(state: Shared) -> Router {
         .fallback(console)
         .with_state(state)
 }
-async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> Response {
-    let path = uri.path();
+async fn console(State(state): State<Shared>, request: Request) -> Response {
+    let path = request.uri().path();
+    let headers = request.headers();
     if path.starts_with("/api/") || path.starts_with("/v1/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(cfg) = state.store.config() else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-    let entry = format!("/{}", cfg.settings.security_path);
     let asset = path.starts_with("/assets/") || path == "/favicon.svg";
-    if path == "/"
-        && path != entry
-        && api::valid_access_host(&headers)
-        && state.store.authenticated(api::cookie(&headers))
-    {
-        let mut response = Response::new(Body::empty());
-        *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
-        let Ok(location) = entry.parse() else {
+    // Vite assets are public; they must not contend with API requests for the SQLite lock.
+    if !asset {
+        let Ok(cfg) = state.store.config() else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        response
-            .headers_mut()
-            .insert(axum::http::header::LOCATION, location);
-        return response;
-    }
-    if path != entry && !asset {
-        return StatusCode::NOT_FOUND.into_response();
+        let entry = format!("/{}", cfg.settings.security_path);
+        if path == "/"
+            && path != entry
+            && api::valid_access_host(headers)
+            && state.store.authenticated(api::cookie(headers))
+        {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+            let Ok(location) = entry.parse() else {
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            };
+            response
+                .headers_mut()
+                .insert(axum::http::header::LOCATION, location);
+            return response;
+        }
+        if path != entry {
+            return StatusCode::NOT_FOUND.into_response();
+        }
     }
     if asset && (path.contains("..") || path.contains('\\')) {
         return StatusCode::NOT_FOUND.into_response();
@@ -264,55 +268,64 @@ async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> R
     let file = state
         .web_dir
         .join(if asset { &path[1..] } else { "index.html" });
-    match tokio::fs::read(file).await {
-        Ok(bytes) => {
-            let content = if path.ends_with(".js") {
-                "application/javascript"
-            } else if path.ends_with(".css") {
-                "text/css"
-            } else if path.ends_with(".svg") {
-                "image/svg+xml"
-            } else if path.ends_with(".woff2") {
-                "font/woff2"
-            } else if path.ends_with(".woff") {
-                "font/woff"
-            } else if path.ends_with(".txt") {
-                "text/plain; charset=utf-8"
-            } else {
-                "text/html; charset=utf-8"
-            };
-            let secure = api::is_https(&headers);
-            let mut response = Response::new(Body::from(bytes));
-            let h = response.headers_mut();
-            h.insert("content-type", content.parse().unwrap());
-            h.insert("x-content-type-options", "nosniff".parse().unwrap());
-            h.insert("x-frame-options", "DENY".parse().unwrap());
-            h.insert("referrer-policy", "same-origin".parse().unwrap());
-            h.insert(
-                "cache-control",
-                if asset {
-                    "public, max-age=86400"
-                } else {
-                    "no-store"
-                }
-                .parse()
-                .unwrap(),
-            );
-            h.insert("content-security-policy","default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'".parse().unwrap());
-            if secure {
-                h.insert(
-                    "strict-transport-security",
-                    "max-age=31536000".parse().unwrap(),
-                );
-            }
-            response
-        }
-        Err(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Frontend is not built. Run npm ci && npm run build in web/.",
-        )
-            .into_response(),
+    let secure = api::is_https(headers);
+    let compressed = asset && (path.ends_with(".js") || path.ends_with(".css"));
+    let fingerprinted = asset
+        && path.rsplit_once('.').is_some_and(|(stem, _)| {
+            let bytes = stem.as_bytes();
+            bytes.len() >= 9
+                && bytes[bytes.len() - 9] == b'-'
+                && bytes[bytes.len() - 8..]
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        });
+    let mut service = tower_http::services::ServeFile::new(file);
+    if compressed {
+        service = service.precompressed_gzip();
     }
+    let mut response = match service.try_call(request).await {
+        Ok(response) if asset || response.status() != StatusCode::NOT_FOUND => {
+            response.map(Body::new)
+        }
+        _ => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Frontend is not built. Run npm ci && npm run build in web/.",
+            )
+                .into_response();
+        }
+    };
+    let cacheable = response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
+    let h = response.headers_mut();
+    if compressed {
+        h.insert("vary", "Accept-Encoding".parse().unwrap());
+    }
+    if h.get("content-type").is_some_and(|v| v == "text/plain") {
+        h.insert("content-type", "text/plain; charset=utf-8".parse().unwrap());
+    }
+    h.insert(
+        "cache-control",
+        (if !asset || !cacheable {
+            "no-store"
+        } else if fingerprinted {
+            "public, max-age=31536000, immutable"
+        } else {
+            "public, max-age=86400"
+        })
+        .parse()
+        .unwrap(),
+    );
+    h.insert("x-content-type-options", "nosniff".parse().unwrap());
+    h.insert("x-frame-options", "DENY".parse().unwrap());
+    h.insert("referrer-policy", "same-origin".parse().unwrap());
+    h.insert("content-security-policy","default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'".parse().unwrap());
+    if secure {
+        h.insert(
+            "strict-transport-security",
+            "max-age=31536000".parse().unwrap(),
+        );
+    }
+    response
 }
 pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Result<Shared, String> {
     let turnstile_env_file = std::env::current_dir()

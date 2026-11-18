@@ -9,8 +9,9 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-react";
+import { useResource, useResources } from "./resources";
 import { api, errorMessage, number, tokenCount } from "./api";
-import type { RequestLog, RequestLogExport, RequestLogPage, State } from "./api";
+import type { RequestLog, RequestLogExport, RequestLogPage } from "./api";
 import { Badge, Button, Confirm, Empty, ErrorBox } from "./components";
 import type { Notice } from "./components";
 
@@ -49,6 +50,22 @@ function Metric({
       <strong>{value}</strong>
     </span>
   );
+}
+
+// Large installations can have thousands of pages. A direct jump stays constant-size.
+function LogPageJump({ page, totalPages, disabled, onChange }: {
+  page: number; totalPages: number; disabled: boolean; onChange: (page: number) => void;
+}) {
+  const [value, setValue] = useState(String(page));
+  return <form className="log-page-jump" onSubmit={(e) => {
+    e.preventDefault();
+    const next = Number(value);
+    if (Number.isInteger(next) && next >= 1 && next <= totalPages) onChange(next);
+  }}>
+    <input aria-label="跳转到页码" type="number" min={1} max={totalPages} required disabled={disabled}
+      value={value} onChange={(e) => setValue(e.target.value)} />
+    <Button type="submit" disabled={disabled}>跳转</Button>
+  </form>;
 }
 
 function LogPageSelect({
@@ -164,7 +181,8 @@ function LogPageSelect({
       const now = Date.now();
       const text = (now - search.current.time < 700 ? search.current.text : "") + event.key;
       search.current = { text, time: now };
-      const index = Array.from({ length: totalPages }, (_, pageIndex) => String(pageIndex + 1)).findIndex((value) => value.startsWith(text));
+      const value = Number(text);
+      const index = Number.isInteger(value) && value >= 1 && value <= totalPages && String(value) === text ? value - 1 : -1;
       if (index >= 0) {
         event.preventDefault();
         if (open) setActive(index);
@@ -205,7 +223,7 @@ function LogPageSelect({
         <div className="log-page-select-heading" role="presentation">
           <span>选择页码</span><span>{totalPages} 页</span>
         </div>
-        {Array.from({ length: totalPages }, (_, index) => (
+        {open && Array.from({ length: totalPages }, (_, index) => (
           <div
             id={`${id}-option-${index}`}
             key={index + 1}
@@ -226,18 +244,16 @@ function LogPageSelect({
   );
 }
 
-function LogRow({ row, state }: { row: RequestLog; state: State }) {
+function LogRow({ row }: { row: RequestLog }) {
   const succeeded = row.status >= 200 && row.status < 300;
   const redirected = row.status >= 300 && row.status < 400;
   const statusLabel = succeeded ? "成功" : redirected ? "重定向" : "失败";
   const statusTone = succeeded ? "green" : redirected ? "amber" : "red";
   const account =
     row.account_name ||
-    state.accounts.find((item) => item.id === row.account_id)?.name ||
     "未匹配账号";
   const key =
     row.key_name ||
-    state.keys.find((item) => item.id === row.key_id)?.name ||
     "未匹配密钥";
   const cached = row.usage.cache_read_input_tokens ?? row.usage.cached_tokens;
   const created = row.usage.cache_creation_input_tokens ?? 0;
@@ -319,52 +335,20 @@ function LogRow({ row, state }: { row: RequestLog; state: State }) {
   );
 }
 
-export function RequestLogs({
-  revision,
-  notify,
-  state,
-  onLoadingChange,
-}: {
-  revision: number;
-  notify: Notice;
-  state: State;
-  onLoadingChange?: (loading: boolean) => void;
-}) {
+export function RequestLogs({ notify }: { notify: Notice }) {
+  const cache = useResources();
   const [page, setPage] = useState(1);
-  const [data, setData] = useState<RequestLogPage | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [refresh, setRefresh] = useState(0);
+  const { data, error, loading, load } = useResource<RequestLogPage>(`/logs?page=${page}`);
   const [exporting, setExporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
-  const requestSequence = useRef(0);
-  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
   useEffect(() => {
-    const sequence = ++requestSequence.current;
-    setLoading(true);
-    setError("");
-    void api<RequestLogPage>(`/logs?page=${page}`)
-      .then((result) => {
-        if (sequence !== requestSequence.current) return;
-        const lastPage = Math.max(1, result.total_pages);
-        if (page > lastPage || result.page !== page) {
-          setPage(Math.min(lastPage, Math.max(1, result.page)));
-          return;
-        }
-        setData(result);
-      })
-      .catch((failure) => {
-        if (sequence === requestSequence.current) setError(errorMessage(failure));
-      })
-      .finally(() => {
-        if (sequence === requestSequence.current) setLoading(false);
-      });
-    return () => {
-      requestSequence.current++;
-    };
-  }, [page, revision, refresh]);
+    if (data && data.page !== page) {
+      cache.get<RequestLogPage>(`/logs?page=${data.page}`).set(data);
+      setPage(data.page);
+    }
+  }, [cache, data, page]);
 
   async function exportLogs() {
     setExporting(true);
@@ -391,18 +375,17 @@ export function RequestLogs({
   async function deleteLogs() {
     setDeleting(true);
     setDeleteError("");
-    requestSequence.current++;
     try {
       const result = await api<{ deleted: number }>("/logs", "DELETE");
       setConfirmDelete(false);
-      setData(null);
+      cache.invalidate("/logs", "/keys", "/stats");
+      cache.get<RequestLogPage>("/logs?page=1").set({ items: [], page: 1, page_size: 20, total: 0, total_pages: 1, retention_days: data?.retention_days ?? 7 });
       setPage(1);
       notify(`已删除 ${number(result.deleted)} 条调用日志`);
     } catch (failure) {
       setDeleteError(errorMessage(failure));
     } finally {
       setDeleting(false);
-      setRefresh((value) => value + 1);
     }
   }
 
@@ -410,7 +393,7 @@ export function RequestLogs({
   const totalPages = Math.max(1, data?.total_pages ?? 1);
   const currentData = data?.page === page ? data : null;
   const total = data?.total ?? 0;
-  const busy = loading || deleting;
+  const busy = (!data && loading) || deleting;
   return (
     <>
       <div className="page-heading log-page-heading">
@@ -420,7 +403,7 @@ export function RequestLogs({
           <p>默认保留最近 7 天{retentionDays !== 7 ? ` · 当前保留 ${retentionDays} 天` : ""} · 过期自动清理</p>
         </div>
         <div className="log-page-actions">
-          <Button onClick={() => setRefresh((value) => value + 1)} disabled={busy}>
+          <Button onClick={() => void load(true)} disabled={loading || deleting}>
             <RefreshCw size={15} className={loading ? "spin" : ""} />刷新
           </Button>
           <Button onClick={() => void exportLogs()} busy={exporting} disabled={deleting}>
@@ -440,13 +423,13 @@ export function RequestLogs({
           <h2><FileClock size={17} />请求记录</h2>
           <span>每页 20 条 · 按时间倒序 · 点击记录展开详情</span>
         </div>
-        {loading ? (
+        {!currentData && loading ? (
           <Empty title="正在加载调用日志" />
-        ) : error ? (
-          <Empty title="调用日志加载失败" action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载</Button>} />
+        ) : !currentData && error ? (
+          <Empty title="调用日志加载失败" action={<Button onClick={() => void load(true)}>重新加载</Button>} />
         ) : currentData?.items.length ? (
           <ol className="request-log-list">
-            {currentData.items.map((row) => <LogRow key={row.id} row={row} state={state} />)}
+            {currentData.items.map((row) => <LogRow key={row.id} row={row} />)}
           </ol>
         ) : (
           <Empty title="暂无调用日志" detail={`最近 ${retentionDays} 天没有调用记录`} />
@@ -461,12 +444,14 @@ export function RequestLogs({
             <Button disabled={busy || !!error || page <= 1} onClick={() => setPage((value) => value - 1)}>
               <ChevronLeft size={15} />上一页
             </Button>
+            {totalPages > 100 ? <LogPageJump key={page} page={page} totalPages={totalPages} disabled={busy} onChange={setPage} /> : (
             <LogPageSelect
               page={Math.min(page, totalPages)}
               totalPages={totalPages}
               disabled={busy || !!error || !total}
               onChange={setPage}
             />
+            )}
             <Button disabled={busy || !!error || page >= totalPages} onClick={() => setPage((value) => value + 1)}>
               下一页<ChevronRight size={15} />
             </Button>

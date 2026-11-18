@@ -21,20 +21,22 @@ import {
   Field,
   Toggle,
 } from "./components";
-import type { PageProps } from "./Management";
+import type { Notice } from "./components";
+import { useResource, useResources, ResourceStatus } from "./resources";
 import { SystemUpdates } from "./SystemUpdates";
 import type { UpdateCheck } from "./useUpdateCheck";
 
-export function SettingsPage({
-  state,
-  reload,
-  notify,
-  updateCheck,
-  updateFocusRequest,
-}: PageProps & { updateCheck: UpdateCheck; updateFocusRequest: number }) {
-  const [form, setForm] = useState<Settings>(state.settings);
+type SettingsProps = { username: string; notify: Notice; updateCheck: UpdateCheck; updateFocusRequest: number };
+export function SettingsPage(props: SettingsProps) {
+  const query = useResource<Settings>("/settings");
+  return <><ResourceStatus label="系统设置" queries={[query]} />{query.data && <SettingsForm {...props} settings={query.data} />}</>;
+}
+function SettingsForm({ settings, username, notify, updateCheck, updateFocusRequest }: SettingsProps & { settings: Settings }) {
+  const cache = useResources();
+  const [form, setForm] = useState<Settings>(settings);
+  const [previousSettings, setPreviousSettings] = useState(settings);
   const [securityEnabled, setSecurityEnabled] = useState(
-    !!state.settings.security_path,
+    !!settings.security_path,
   );
   const [turnstileSecret, setTurnstileSecret] = useState("");
   const [turnstileClear, setTurnstileClear] = useState(false);
@@ -54,8 +56,16 @@ export function SettingsPage({
         ? form.security_path.replace(/^\/+|\/+$/g, "")
         : "",
       turnstile_secret_key: turnstileClear ? "" : turnstileSecret || undefined,
-    }) !== JSON.stringify(state.settings);
-  const entry = `${window.location.origin}/${state.settings.security_path || ""}`;
+    }) !== JSON.stringify(settings);
+  // Revalidation may finish after typing starts. Update only a pristine draft.
+  if (previousSettings !== settings) {
+    setPreviousSettings(settings);
+    if (form === previousSettings && securityEnabled === !!previousSettings.security_path) {
+      setForm(settings);
+      setSecurityEnabled(!!settings.security_path);
+    }
+  }
+  const entry = `${window.location.origin}/${settings.security_path || ""}`;
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
     setForm((previous) => ({ ...previous, [key]: value }));
   }
@@ -79,7 +89,8 @@ export function SettingsPage({
           : turnstileSecret || undefined,
       });
       window.history.replaceState(null, "", `/${securityPath}`);
-      await reload();
+      cache.get<Settings>("/settings").set(saved);
+      if (saved.retention_days !== settings.retention_days) cache.invalidate("/logs", "/stats", "/keys");
       setForm(saved);
       setTurnstileSecret("");
       setTurnstileClear(false);
@@ -157,10 +168,10 @@ export function SettingsPage({
                 <p>控制台访问地址</p>
               </div>
               <Badge
-                variant={state.settings.security_path ? "green" : "neutral"}
+                variant={settings.security_path ? "green" : "neutral"}
                 dot
               >
-                {state.settings.security_path ? "已启用" : "未启用"}
+                {settings.security_path ? "已启用" : "未启用"}
               </Badge>
             </div>
             <div className="settings-section-body">
@@ -211,16 +222,16 @@ export function SettingsPage({
                 <span>
                   <strong>Cloudflare Turnstile</strong>
                   <small>
-                    {state.settings.turnstile_enabled
+                    {settings.turnstile_enabled
                       ? "Cloudflare Turnstile 已启用"
                       : "登录时进行人机安全校验"}
                   </small>
                 </span>
                 <Badge
-                  variant={state.settings.turnstile_enabled ? "green" : "neutral"}
+                  variant={settings.turnstile_enabled ? "green" : "neutral"}
                   dot
                 >
-                  {state.settings.turnstile_enabled
+                  {settings.turnstile_enabled
                     ? "Cloudflare Turnstile 已启用"
                     : "Cloudflare Turnstile 未启用"}
                 </Badge>
@@ -236,7 +247,7 @@ export function SettingsPage({
               <Field
                 label="Cloudflare Turnstile 密钥"
                 hint={
-                  state.settings.turnstile_enabled
+                  settings.turnstile_enabled
                     ? "已保存密钥；输入新值可替换"
                     : "保存后登录将强制进行安全校验"
                 }
@@ -248,7 +259,7 @@ export function SettingsPage({
                     setTurnstileSecret(event.target.value);
                     setTurnstileClear(false);
                   }}
-                  placeholder={state.settings.turnstile_enabled ? "已配置" : "输入 Secret Key"}
+                  placeholder={settings.turnstile_enabled ? "已配置" : "输入 Secret Key"}
                   maxLength={512}
                 />
               </Field>
@@ -257,7 +268,7 @@ export function SettingsPage({
                   <PlugZap size={15} />
                   测试连接
                 </Button>
-                {state.settings.turnstile_enabled && (
+                {settings.turnstile_enabled && (
                   <Button
                     type="button"
                     onClick={() => {
@@ -404,7 +415,7 @@ export function SettingsPage({
             <Fingerprint size={27} strokeWidth={1.5} />
           </span>
           <span className="eyebrow">ADMINISTRATOR</span>
-          <strong>{state.username}</strong>
+          <strong>{username}</strong>
           <div>
             <span className="status-dot" />
             当前管理员

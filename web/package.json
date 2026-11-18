@@ -1,11 +1,13 @@
 {
   "name": "zako-relay-console",
   "private": true,
-  "version": "0.14.1",
+  "version": "0.14.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:build": "node --test tests/dist.mjs",
     "typecheck": "tsc --noEmit --pretty false"
   },
   "dependencies": {
