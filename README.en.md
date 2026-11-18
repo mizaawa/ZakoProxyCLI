@@ -4,7 +4,7 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.14.1**, synchronizing the latest pinned coldcoffee provenance and GPT-6.2 Astra / Sol seat label, with two new independent exact-model profiles. All 15 template bodies and the original 42 profile IDs, model lists, and saved key selections are preserved. The general default strategy is unchanged; no database schema migration is required.
+Current release: **v0.14.2**, improving loading across the console with on-demand page bundles, session-scoped request reuse, targeted refreshes, paginated management tables, smaller optional API responses, and precompressed static assets. Existing profiles, model mappings, saved accounts and key selections remain unchanged; no database schema migration is required. See the [release notes](docs/releases/v0.14.2.md).
 
 ## Relay Recommendation: 杂鱼 API
 
