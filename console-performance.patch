@@ -1,0 +1,2709 @@
+diff --git a/src/api.rs b/src/api.rs
+index 1f5079e85717482e53f5ba57eeeb9075efabb2dd..972f43700ee6bad2d05ff42ad1bd2fde39745175 100644
+--- a/src/api.rs
++++ b/src/api.rs
+@@ -2,6 +2,5 @@ use crate::{
+     ApiError, ApiResult, Shared, bad, profiles,
+     store::{
+-        Account, ApiKey, Config, Group, LOG_PAGE_SIZE, RequestLog, Settings, Usage, digest, id,
+-        now, token,
++        Account, ApiKey, Config, Group, LOG_PAGE_SIZE, RequestLog, Settings, digest, id, now, token,
+     },
+     unauthorized,
+@@ -775,11 +774,26 @@ pub async fn delete_account(
+     Ok(Json(json!({"ok":true})))
+ }
+-pub async fn keys(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
++#[derive(Deserialize)]
++pub struct KeyListQuery {
++    usage: Option<bool>,
++}
++pub async fn keys(
++    State(s): State<Shared>,
++    h: HeaderMap,
++    Query(query): Query<KeyListQuery>,
++) -> ApiResult<Value> {
+     auth(&s, &h)?;
+     let c = s.store.config()?;
+-    let logs = s.store.logs(0, now())?;
+-    Ok(Json(Value::Array(c.keys.iter().map(|k|{
+-        let mut u=Usage::default();for l in logs.iter().filter(|l|l.key_id==k.id){u.input_tokens+=l.usage.input_tokens;u.output_tokens+=l.usage.output_tokens;u.cached_tokens+=l.usage.cached_tokens;u.cache_creation_input_tokens+=l.usage.cache_creation_input_tokens;u.cache_read_input_tokens+=l.usage.cache_read_input_tokens;}
+-        json!({"id":k.id,"name":k.name,"group_id":k.group_id,"profile_ids":k.profile_ids,"default_strategy_enabled":k.default_strategy_enabled,"prefix":k.prefix,"enabled":k.enabled,"created_at":k.created_at,"usage":u})
++    let usage = if query.usage != Some(false) && !c.keys.is_empty() {
++        Some(s.store.usage_by_key()?)
++    } else {
++        None
++    };
++    Ok(Json(Value::Array(c.keys.iter().map(|k| {
++        let mut key = json!({"id":k.id,"name":k.name,"group_id":k.group_id,"profile_ids":k.profile_ids,"default_strategy_enabled":k.default_strategy_enabled,"prefix":k.prefix,"enabled":k.enabled,"created_at":k.created_at});
++        if let Some(usage) = &usage {
++            key["usage"] = json!(usage.get(&k.id).cloned().unwrap_or_default());
++        }
++        key
+     }).collect())))
+ }
+@@ -1292,5 +1306,14 @@ pub async fn test_proxy(
+     }))
+ }
+-pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
++#[derive(Deserialize)]
++pub struct ProfileListQuery {
++    #[serde(default)]
++    summary: bool,
++}
++pub async fn profiles(
++    State(s): State<Shared>,
++    h: HeaderMap,
++    Query(query): Query<ProfileListQuery>,
++) -> ApiResult<Value> {
+     auth(&s, &h)?;
+     let config = s.store.config()?;
+@@ -1308,4 +1331,9 @@ pub async fn profiles(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value>
+         }
+     }
++    if query.summary {
++        return Ok(Json(Value::Array(catalog.iter().map(|p| json!({
++            "id":p.id, "name":p.name, "models":p.models, "model_family":p.model_family, "metadata":p.metadata
++        })).collect())));
++    }
+     Ok(Json(json!(catalog)))
+ }
+@@ -1318,4 +1346,5 @@ pub struct Range {
+     from: Option<i64>,
+     to: Option<i64>,
++    recent: Option<bool>,
+ }
+ pub async fn stats(
+@@ -1331,5 +1360,22 @@ pub async fn stats(
+     }
+     let logs = s.store.logs(start, end)?;
+-    let live = s.store.logs(now() - 60, now())?;
++    let current = now();
++    let live_start = current - 60;
++    let live_logs = if start <= live_start && end >= current {
++        None
++    } else {
++        Some(s.store.logs(live_start, current)?)
++    };
++    let (rpm, tpm) = live_logs
++        .as_deref()
++        .unwrap_or(&logs)
++        .iter()
++        .filter(|l| (live_start..=current).contains(&l.timestamp))
++        .fold((0u64, 0u64), |(count, tokens), l| {
++            (
++                count + 1,
++                tokens + l.usage.input_tokens + l.usage.output_tokens,
++            )
++        });
+     let c = s.store.config()?;
+     let mut input = 0u64;
+@@ -1341,5 +1387,5 @@ pub async fn stats(
+     let mut successes = 0u64;
+     let mut cyber = 0u64;
+-    let mut daily: BTreeMap<String, Value> = BTreeMap::new();
++    let mut daily: BTreeMap<i64, Value> = BTreeMap::new();
+     for l in &logs {
+         input += l.usage.input_tokens;
+@@ -1352,9 +1398,8 @@ pub async fn stats(
+         successes += u64::from(ok);
+         cyber += u64::from(l.cyber);
+-        let date = chrono::DateTime::from_timestamp(l.timestamp, 0)
+-            .unwrap_or_default()
+-            .format("%Y-%m-%d")
+-            .to_string();
+-        let d=daily.entry(date.clone()).or_insert(json!({"date":date,"input_tokens":0,"output_tokens":0,"cached_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"total_requests":0,"success_count":0,"cyber_count":0}));
++        let d = daily.entry(l.timestamp.div_euclid(86400)).or_insert_with(|| {
++            let date = chrono::DateTime::from_timestamp(l.timestamp, 0).unwrap_or_default().format("%Y-%m-%d").to_string();
++            json!({"date":date,"input_tokens":0,"output_tokens":0,"cached_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"total_requests":0,"success_count":0,"cyber_count":0})
++        });
+         for (key, n) in [
+             ("input_tokens", l.usage.input_tokens),
+@@ -1385,7 +1430,7 @@ pub async fn stats(
+         .filter(|a| a.enabled && !runtime.get(&a.id).is_some_and(|r| r.cooldown_until > now()))
+         .count();
+-    let recent:Vec<Value>=logs.iter().take(100).map(|l|json!({"id":l.id,"created_at":l.timestamp,"model":l.model,"account_name":c.accounts.iter().find(|a|a.id==l.account_id).map(|a|&a.name),"key_name":c.keys.iter().find(|k|k.id==l.key_id).map(|k|&k.name),"status":l.status,"latency_ms":l.latency_ms,"first_token_ms":l.first_token_ms,"input_tokens":l.usage.input_tokens,"output_tokens":l.usage.output_tokens,"cached_tokens":l.usage.cached_tokens,"cache_creation_input_tokens":l.usage.cache_creation_input_tokens,"cache_read_input_tokens":l.usage.cache_read_input_tokens,"cyber_count":u8::from(l.cyber),"attempts":l.attempts,"protocol":l.protocol})).collect();
++    let recent:Vec<Value>=logs.iter().take(if range.recent == Some(false) { 0 } else { 100 }).map(|l|json!({"id":l.id,"created_at":l.timestamp,"model":l.model,"account_name":c.accounts.iter().find(|a|a.id==l.account_id).map(|a|&a.name),"key_name":c.keys.iter().find(|k|k.id==l.key_id).map(|k|&k.name),"status":l.status,"latency_ms":l.latency_ms,"first_token_ms":l.first_token_ms,"input_tokens":l.usage.input_tokens,"output_tokens":l.usage.output_tokens,"cached_tokens":l.usage.cached_tokens,"cache_creation_input_tokens":l.usage.cache_creation_input_tokens,"cache_read_input_tokens":l.usage.cache_read_input_tokens,"cyber_count":u8::from(l.cyber),"attempts":l.attempts,"protocol":l.protocol})).collect();
+     Ok(Json(
+-        json!({"summary":{"input_tokens":input,"output_tokens":output,"cached_tokens":cached,"cache_creation_input_tokens":cache_creation,"cache_read_input_tokens":cache_read,"uncached_tokens":input.saturating_sub(cached),"total_tokens":input+output,"cache_hit_rate":if input>0{cached as f64/input as f64*100.0}else{0.0},"rpm":live.len(),"tpm":live.iter().map(|l|l.usage.input_tokens+l.usage.output_tokens).sum::<u64>(),"total_requests":logs.len(),"success_rate":if n>0.0{successes as f64/n*100.0}else{0.0},"avg_latency_ms":if n>0.0{latency as f64/n}else{0.0},"cyber_count":cyber},"daily":daily.into_values().collect::<Vec<_>>(),"recent":recent,"accounts":{"total":c.accounts.len(),"healthy":healthy,"cooling":cooling},"keys":c.keys.len()}),
++        json!({"summary":{"input_tokens":input,"output_tokens":output,"cached_tokens":cached,"cache_creation_input_tokens":cache_creation,"cache_read_input_tokens":cache_read,"uncached_tokens":input.saturating_sub(cached),"total_tokens":input+output,"cache_hit_rate":if input>0{cached as f64/input as f64*100.0}else{0.0},"rpm":rpm,"tpm":tpm,"total_requests":logs.len(),"success_rate":if n>0.0{successes as f64/n*100.0}else{0.0},"avg_latency_ms":if n>0.0{latency as f64/n}else{0.0},"cyber_count":cyber},"daily":daily.into_values().collect::<Vec<_>>(),"recent":recent,"accounts":{"total":c.accounts.len(),"healthy":healthy,"cooling":cooling},"keys":c.keys.len()}),
+     ))
+ }
+diff --git a/src/lib.rs b/src/lib.rs
+index 6e697c86ea646ebc96f0f6b58d2174c2f68833ad..677f17fa1aa03aee18abd33433b8bc3c148eb826 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,6 +12,6 @@ use axum::{
+     Router,
+     body::Body,
+-    extract::{DefaultBodyLimit, State},
+-    http::{HeaderMap, StatusCode, Uri},
++    extract::{DefaultBodyLimit, Request, State},
++    http::StatusCode,
+     response::{IntoResponse, Response},
+     routing::{get, post, put},
+@@ -231,31 +231,35 @@ pub fn app(state: Shared) -> Router {
+         .with_state(state)
+ }
+-async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> Response {
+-    let path = uri.path();
++async fn console(State(state): State<Shared>, request: Request) -> Response {
++    let path = request.uri().path();
++    let headers = request.headers();
+     if path.starts_with("/api/") || path.starts_with("/v1/") {
+         return StatusCode::NOT_FOUND.into_response();
+     }
+-    let Ok(cfg) = state.store.config() else {
+-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+-    };
+-    let entry = format!("/{}", cfg.settings.security_path);
+     let asset = path.starts_with("/assets/") || path == "/favicon.svg";
+-    if path == "/"
+-        && path != entry
+-        && api::valid_access_host(&headers)
+-        && state.store.authenticated(api::cookie(&headers))
+-    {
+-        let mut response = Response::new(Body::empty());
+-        *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
+-        let Ok(location) = entry.parse() else {
++    // Vite assets are public; they must not contend with API requests for the SQLite lock.
++    if !asset {
++        let Ok(cfg) = state.store.config() else {
+             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+         };
+-        response
+-            .headers_mut()
+-            .insert(axum::http::header::LOCATION, location);
+-        return response;
+-    }
+-    if path != entry && !asset {
+-        return StatusCode::NOT_FOUND.into_response();
++        let entry = format!("/{}", cfg.settings.security_path);
++        if path == "/"
++            && path != entry
++            && api::valid_access_host(headers)
++            && state.store.authenticated(api::cookie(headers))
++        {
++            let mut response = Response::new(Body::empty());
++            *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
++            let Ok(location) = entry.parse() else {
++                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
++            };
++            response
++                .headers_mut()
++                .insert(axum::http::header::LOCATION, location);
++            return response;
++        }
++        if path != entry {
++            return StatusCode::NOT_FOUND.into_response();
++        }
+     }
+     if asset && (path.contains("..") || path.contains('\\')) {
+@@ -265,53 +269,62 @@ async fn console(State(state): State<Shared>, headers: HeaderMap, uri: Uri) -> R
+         .web_dir
+         .join(if asset { &path[1..] } else { "index.html" });
+-    match tokio::fs::read(file).await {
+-        Ok(bytes) => {
+-            let content = if path.ends_with(".js") {
+-                "application/javascript"
+-            } else if path.ends_with(".css") {
+-                "text/css"
+-            } else if path.ends_with(".svg") {
+-                "image/svg+xml"
+-            } else if path.ends_with(".woff2") {
+-                "font/woff2"
+-            } else if path.ends_with(".woff") {
+-                "font/woff"
+-            } else if path.ends_with(".txt") {
+-                "text/plain; charset=utf-8"
+-            } else {
+-                "text/html; charset=utf-8"
+-            };
+-            let secure = api::is_https(&headers);
+-            let mut response = Response::new(Body::from(bytes));
+-            let h = response.headers_mut();
+-            h.insert("content-type", content.parse().unwrap());
+-            h.insert("x-content-type-options", "nosniff".parse().unwrap());
+-            h.insert("x-frame-options", "DENY".parse().unwrap());
+-            h.insert("referrer-policy", "same-origin".parse().unwrap());
+-            h.insert(
+-                "cache-control",
+-                if asset {
+-                    "public, max-age=86400"
+-                } else {
+-                    "no-store"
+-                }
+-                .parse()
+-                .unwrap(),
+-            );
+-            h.insert("content-security-policy","default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'".parse().unwrap());
+-            if secure {
+-                h.insert(
+-                    "strict-transport-security",
+-                    "max-age=31536000".parse().unwrap(),
+-                );
+-            }
+-            response
++    let secure = api::is_https(headers);
++    let compressed = asset && (path.ends_with(".js") || path.ends_with(".css"));
++    let fingerprinted = asset
++        && path.rsplit_once('.').is_some_and(|(stem, _)| {
++            let bytes = stem.as_bytes();
++            bytes.len() >= 9
++                && bytes[bytes.len() - 9] == b'-'
++                && bytes[bytes.len() - 8..]
++                    .iter()
++                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
++        });
++    let mut service = tower_http::services::ServeFile::new(file);
++    if compressed {
++        service = service.precompressed_gzip();
++    }
++    let mut response = match service.try_call(request).await {
++        Ok(response) if asset || response.status() != StatusCode::NOT_FOUND => {
++            response.map(Body::new)
+         }
+-        Err(_) => (
+-            StatusCode::SERVICE_UNAVAILABLE,
+-            "Frontend is not built. Run npm ci && npm run build in web/.",
+-        )
+-            .into_response(),
++        _ => {
++            return (
++                StatusCode::SERVICE_UNAVAILABLE,
++                "Frontend is not built. Run npm ci && npm run build in web/.",
++            )
++                .into_response();
++        }
++    };
++    let cacheable = response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED;
++    let h = response.headers_mut();
++    if compressed {
++        h.insert("vary", "Accept-Encoding".parse().unwrap());
++    }
++    if h.get("content-type").is_some_and(|v| v == "text/plain") {
++        h.insert("content-type", "text/plain; charset=utf-8".parse().unwrap());
++    }
++    h.insert(
++        "cache-control",
++        (if !asset || !cacheable {
++            "no-store"
++        } else if fingerprinted {
++            "public, max-age=31536000, immutable"
++        } else {
++            "public, max-age=86400"
++        })
++        .parse()
++        .unwrap(),
++    );
++    h.insert("x-content-type-options", "nosniff".parse().unwrap());
++    h.insert("x-frame-options", "DENY".parse().unwrap());
++    h.insert("referrer-policy", "same-origin".parse().unwrap());
++    h.insert("content-security-policy","default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'none'".parse().unwrap());
++    if secure {
++        h.insert(
++            "strict-transport-security",
++            "max-age=31536000".parse().unwrap(),
++        );
+     }
++    response
+ }
+ pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Result<Shared, String> {
+diff --git a/src/store.rs b/src/store.rs
+index 3a7adff9bc5e13909cf14cf743855cc9b948bba4..081ba7279fa7b27bd36d67b572fdfad9fb6a2b32 100644
+--- a/src/store.rs
++++ b/src/store.rs
+@@ -524,4 +524,34 @@ impl Store {
+         Ok(())
+     }
++    // The key list needs only usage, not full log records, their sort order, or one scan per key.
++    pub fn usage_by_key(&self) -> Result<std::collections::HashMap<String, Usage>> {
++        #[derive(Deserialize)]
++        struct KeyUsage {
++            key_id: String,
++            usage: Usage,
++        }
++        let db = self.db.lock().map_err(|e| e.to_string())?;
++        prune_logs(&db, read_config(&db)?.settings.retention_days)?;
++        let mut query = db
++            .prepare("SELECT value FROM requests WHERE timestamp BETWEEN 0 AND ?1")
++            .map_err(|e| e.to_string())?;
++        let mut rows = query.query([now()]).map_err(|e| e.to_string())?;
++        let mut totals = std::collections::HashMap::<String, Usage>::new();
++        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
++            let raw = row
++                .get_ref(0)
++                .map_err(|e| e.to_string())?
++                .as_str()
++                .map_err(|e| e.to_string())?;
++            let log: KeyUsage = serde_json::from_str(raw).map_err(|e| e.to_string())?;
++            let total = totals.entry(log.key_id).or_default();
++            total.input_tokens += log.usage.input_tokens;
++            total.output_tokens += log.usage.output_tokens;
++            total.cached_tokens += log.usage.cached_tokens;
++            total.cache_creation_input_tokens += log.usage.cache_creation_input_tokens;
++            total.cache_read_input_tokens += log.usage.cache_read_input_tokens;
++        }
++        Ok(totals)
++    }
+     pub fn logs(&self, from: i64, to: i64) -> Result<Vec<RequestLog>> {
+         let db = self.db.lock().map_err(|e| e.to_string())?;
+diff --git a/tests/application.rs b/tests/application.rs
+index 5a88105013b1e328f10e1dacf8cb9bf215146943..62de12589c0222c8779af15307d6153451c901d1 100644
+--- a/tests/application.rs
++++ b/tests/application.rs
+@@ -71,4 +71,68 @@ async fn license_notices_are_served_as_plain_text() {
+     );
+ }
++#[tokio::test]
++async fn static_asset_compression_is_negotiated_and_entry_is_never_immutable() {
++    let (dir, state) = fixture();
++    let web = dir.path().join("web");
++    let assets = web.join("assets");
++    std::fs::create_dir_all(&assets).unwrap();
++    std::fs::write(web.join("index.html"), "entry").unwrap();
++    std::fs::write(assets.join("page-ab12CD_3.js"), "original").unwrap();
++    std::fs::write(assets.join("page-ab12CD_3.js.gz"), "precompressed").unwrap();
++    for (accept, encoded) in [("gzip", true), ("gzip;q=0", false), ("identity", false)] {
++        let req = Request::builder()
++            .uri("/assets/page-ab12CD_3.js")
++            .header("accept-encoding", accept)
++            .body(Body::empty())
++            .unwrap();
++        let res = app(state.clone()).oneshot(req).await.unwrap();
++        assert_eq!(res.status(), StatusCode::OK);
++        assert_eq!(res.headers()["vary"], "Accept-Encoding");
++        assert!(
++            res.headers()["cache-control"]
++                .to_str()
++                .unwrap()
++                .contains("immutable")
++        );
++        assert_eq!(res.headers().contains_key("content-encoding"), encoded);
++        assert_eq!(
++            &to_bytes(res.into_body(), 100).await.unwrap()[..],
++            if encoded {
++                &b"precompressed"[..]
++            } else {
++                &b"original"[..]
++            }
++        );
++    }
++    let res = app(state)
++        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
++        .await
++        .unwrap();
++    assert_eq!(res.headers()["cache-control"], "no-store");
++}
++
++#[tokio::test]
++async fn profile_selector_summary_matches_full_catalog_without_instruction_bodies() {
++    let (_dir, state) = fixture();
++    let cookie = setup(&state).await;
++    let (status, summary, _) = request(
++        &state,
++        "GET",
++        "/api/profiles?summary=true",
++        Value::Null,
++        &cookie,
++        "/",
++    )
++    .await;
++    assert_eq!(status, StatusCode::OK);
++    let rows = summary.as_array().unwrap();
++    assert_eq!(rows.len(), profiles::all().len());
++    for (row, profile) in rows.iter().zip(profiles::all()) {
++        assert_eq!(row["id"], profile.id);
++        assert_eq!(row["models"], json!(profile.models));
++        assert!(row.get("instruction").is_none());
++    }
++}
++
+ async fn request(
+     s: &Shared,
+diff --git a/tests/request_logs.rs b/tests/request_logs.rs
+index 319891faac684bab0d0ca171cde6e0ed41bd88d0..81b85db05b73fbf8da511d537342986557b5057f 100644
+--- a/tests/request_logs.rs
++++ b/tests/request_logs.rs
+@@ -367,4 +367,8 @@ async fn cache_metrics_aggregate_without_counting_creation_as_cache_hits() {
+     }
+     let keys = json_body(request(&state, "GET", "/api/keys").await).await;
++    let light = json_body(request(&state, "GET", "/api/keys?usage=false").await).await;
++    let mut expected = keys.clone();
++    expected[0].as_object_mut().unwrap().remove("usage");
++    assert_eq!(light, expected);
+     assert_eq!(keys[0]["usage"]["input_tokens"], 300);
+     assert_eq!(keys[0]["usage"]["output_tokens"], 10);
+@@ -373,4 +377,12 @@ async fn cache_metrics_aggregate_without_counting_creation_as_cache_hits() {
+     assert_eq!(keys[0]["usage"]["cache_read_input_tokens"], 200);
+     let stats = json_body(request(&state, "GET", "/api/stats").await).await;
++    let overview = json_body(request(&state, "GET", "/api/stats?recent=false").await).await;
++    assert_eq!(
++        overview["summary"]["total_tokens"],
++        stats["summary"]["total_tokens"]
++    );
++    assert_eq!(overview["daily"], stats["daily"]);
++    assert!(overview["recent"].as_array().unwrap().is_empty());
++    assert!(!stats["recent"].as_array().unwrap().is_empty());
+     assert_eq!(stats["summary"]["input_tokens"], 300);
+     assert_eq!(stats["summary"]["total_tokens"], 310);
+diff --git a/web/package.json b/web/package.json
+index 0b4bf3c22ae42194a6dbeeaa5dd5feba028acf43..ce2f14dd1f59cf1ad4aa3eba10eda5651c5144b0 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -7,4 +7,6 @@
+     "dev": "vite --host 0.0.0.0",
+     "build": "tsc --noEmit && vite build",
++    "test": "node --experimental-strip-types --test tests/*.test.mjs",
++    "test:build": "node --test tests/dist.mjs",
+     "typecheck": "tsc --noEmit --pretty false"
+   },
+diff --git a/web/src/App.tsx b/web/src/App.tsx
+index 6507562af4a211ebd043fe5dbb1a96ae90037391..e8df7fe92f1043d4d7e48c627247d8806806dab6 100644
+--- a/web/src/App.tsx
++++ b/web/src/App.tsx
+@@ -1,4 +1,4 @@
+-import { Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+-import type { FormEvent } from "react";
++import { Component, Fragment, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
++import type { FormEvent, ReactNode } from "react";
+ import {
+   Activity,
+@@ -25,11 +25,9 @@ import {
+ } from "lucide-react";
+ import { api, errorMessage } from "./api";
+-import type { State, Group, Account, RelayKey, Settings, Profile } from "./api";
++import type { Settings } from "./api";
++import { ResourceCache } from "./resourceCache";
++import { Resources, Loading, keyListPath } from "./resources";
+ import { Button, ErrorBox, Field, IconButton, Toast } from "./components";
+ import { Dashboard } from "./Dashboard";
+-import { RequestLogs } from "./RequestLogs";
+-import { ProvidersPage } from "./Providers";
+-import { GroupsPage, AccountsPage, KeysPage } from "./Management";
+-import { SettingsPage } from "./Settings";
+ import { PromoBanner } from "./PromoBanner";
+ import { Mascot } from "./Mascot";
+@@ -37,5 +35,26 @@ import { useUpdateCheck } from "./useUpdateCheck";
+ import { version } from "../package.json";
+ 
+-const Playground = lazy(() => import("./Playground").then((module) => ({ default: module.Playground })));
++const loadManagement = () => import("./Management");
++const pageModules = {
++  playground: () => import("./Playground"),
++  keys: loadManagement, groups: loadManagement, accounts: loadManagement,
++  providers: () => import("./Providers"), logs: () => import("./RequestLogs"),
++  settings: () => import("./Settings"),
++};
++const Playground = lazy(() => pageModules.playground().then((m) => ({ default: m.Playground })));
++const GroupsPage = lazy(() => loadManagement().then((m) => ({ default: m.GroupsPage })));
++const AccountsPage = lazy(() => loadManagement().then((m) => ({ default: m.AccountsPage })));
++const KeysPage = lazy(() => loadManagement().then((m) => ({ default: m.KeysPage })));
++const ProvidersPage = lazy(() => pageModules.providers().then((m) => ({ default: m.ProvidersPage })));
++const RequestLogs = lazy(() => pageModules.logs().then((m) => ({ default: m.RequestLogs })));
++const SettingsPage = lazy(() => pageModules.settings().then((m) => ({ default: m.SettingsPage })));
++
++class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
++  state = { failed: false };
++  static getDerivedStateFromError() { return { failed: true }; }
++  render() {
++    return this.state.failed ? <div className="page-load-error" role="alert"><ErrorBox message="页面未能加载，请刷新后重试。" /><Button onClick={() => window.location.reload()}>重新加载</Button></div> : this.props.children;
++  }
++}
+ 
+ declare global {
+@@ -60,5 +79,17 @@ const navigation = [
+ ] as const;
+ type Page = (typeof navigation)[number]["id"];
+-const independentlyLoadedPages: readonly Page[] = ["dashboard", "providers", "logs"];
++function warmCode(page: Page) {
++  if (page !== "dashboard") void pageModules[page]().catch(() => {}); // Render has a retry boundary.
++}
++// Start reads alongside the page chunk, not in a waterfall after it arrives.
++const firstReads: Record<Page, string[]> = {
++  dashboard: [], playground: [keyListPath, "/groups"], keys: ["/keys", "/groups"],
++  groups: ["/groups", "/accounts", keyListPath], accounts: ["/accounts", "/groups"],
++  providers: ["/providers"], logs: ["/logs?page=1"], settings: ["/settings"],
++};
++function preparePage(page: Page, cache: ResourceCache) {
++  warmCode(page);
++  for (const path of firstReads[page]) void cache.get(path).load();
++}
+ 
+ function Brand() {
+@@ -243,5 +274,6 @@ export default function App() {
+   const [initialized, setInitialized] = useState<boolean | null>(null);
+   const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
+-  const [state, setState] = useState<State | null>(null);
++  const [session, setSession] = useState<{ username: string; cache: ResourceCache } | null>(null);
++  const sessionCache = useRef<ResourceCache | null>(null);
+   const [page, setPage] = useState<Page>(() => {
+     const stored = localStorage.getItem("zako-page");
+@@ -250,100 +282,65 @@ export default function App() {
+       : "dashboard";
+   });
+-  const [pageLoading, setPageLoading] = useState(() => independentlyLoadedPages.includes(page));
+-  const [pageError, setPageError] = useState("");
+-  const [navigationId, setNavigationId] = useState(0);
+-  const navigationSequence = useRef(0);
+   const currentPage = useRef(page);
+-  const stateRequestSequence = useRef(0);
++  const bootRequest = useRef<Promise<void> | null>(null);
+   const [mobileNav, setMobileNav] = useState(false);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState("");
+   const [refreshing, setRefreshing] = useState(false);
+-  const [revision, setRevision] = useState(0);
+   const [updateFocusRequest, setUpdateFocusRequest] = useState(0);
+-  const updateCheck = useUpdateCheck(!!state);
++  const updateCheck = useUpdateCheck(!!session);
+   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
+     null,
+   );
+   const notify = useCallback(
+-    (text: string, isError = false) => setNotice({ text, error: isError }),
+-    [],
++    (text: string, isError = false) => {
++      if (session && sessionCache.current === session.cache) setNotice({ text, error: isError });
++    },
++    [session],
+   );
+-  const loadState = useCallback(async () => {
+-    const request = ++stateRequestSequence.current;
+-    const [groups, accounts, keys, settings, profiles, bootstrap] =
+-      await Promise.all([
+-        api<Group[]>("/groups"),
+-        api<Account[]>("/accounts"),
+-        api<RelayKey[]>("/keys"),
+-        api<Settings>("/settings"),
+-        api<Profile[]>("/profiles"),
+-        api<{ username: string; turnstile_site_key: string }>("/bootstrap"),
+-      ]);
+-    if (request !== stateRequestSequence.current) return;
+-    setState({
+-      groups,
+-      accounts,
+-      keys,
+-      settings,
+-      profiles,
+-      username: bootstrap.username,
+-    });
+-    setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
+-    setInitialized(true);
+-  }, []);
+-  const reportPageLoading = useCallback((pending: boolean) => {
+-    if (navigationId === navigationSequence.current && page === currentPage.current) {
+-      setPageLoading(pending);
+-    }
+-  }, [navigationId, page]);
+-  async function navigate(target: Page, retry = false) {
++  function navigate(target: Page) {
+     setMobileNav(false);
+-    if (target === currentPage.current && !retry) return;
+-    const request = ++navigationSequence.current;
++    if (target === currentPage.current || !session) return;
+     currentPage.current = target;
+-    setNavigationId(request);
++    preparePage(target, session.cache);
+     setPage(target);
+-    setPageError("");
+-    setPageLoading(true);
+-    if (independentlyLoadedPages.includes(target)) return;
+-    try {
+-      await loadState();
+-    } catch (failure) {
+-      if (request === navigationSequence.current) setPageError(errorMessage(failure));
+-    } finally {
+-      if (request === navigationSequence.current) setPageLoading(false);
+-    }
+   }
+-  const boot = useCallback(async () => {
++  const endSession = useCallback(() => {
++    // A settings edit may have changed the next login challenge since bootstrap.
++    const settings = sessionCache.current?.get<Settings>("/settings").getSnapshot().data;
++    if (settings) setTurnstileSiteKey(settings.turnstile_enabled ? settings.turnstile_site_key : "");
++    sessionCache.current?.dispose();
++    sessionCache.current = null;
++    setSession(null);
++    setNotice(null);
++    setMobileNav(false);
++  }, []);
++  const boot = useCallback(() => {
++    if (bootRequest.current) return bootRequest.current;
+     setLoading(true);
+     setError("");
+-    try {
+-      const bootstrap = await api<{
+-        initialized: boolean;
+-        authenticated: boolean;
+-        turnstile_site_key: string;
+-      }>("/bootstrap");
+-      setInitialized(bootstrap.initialized);
+-      setTurnstileSiteKey(bootstrap.turnstile_site_key || "");
+-      if (bootstrap.authenticated) await loadState();
+-    } catch (failure) {
+-      setError(errorMessage(failure));
+-    } finally {
++    const request = api<{
++      authenticated: boolean; initialized: boolean; username: string; turnstile_site_key: string;
++    }>("/bootstrap").then((info) => {
++      setInitialized(info.initialized);
++      setTurnstileSiteKey(info.turnstile_site_key || "");
++      if (info.authenticated) {
++        const cache = new ResourceCache((path, signal) => api(path, "GET", undefined, signal));
++        sessionCache.current = cache;
++        preparePage(currentPage.current, cache);
++        setSession({ username: info.username, cache });
++      }
++    }).catch((failure) => setError(errorMessage(failure))).finally(() => {
++      bootRequest.current = null;
+       setLoading(false);
+-    }
+-  }, [loadState]);
++    });
++    bootRequest.current = request;
++    return request;
++  }, []);
+   useEffect(() => {
+     void boot();
+-    const expired = () => {
+-      stateRequestSequence.current += 1;
+-      setNavigationId(++navigationSequence.current);
+-      setPageLoading(independentlyLoadedPages.includes(currentPage.current));
+-      setPageError("");
+-      setState(null);
+-    };
+-    window.addEventListener("session-expired", expired);
+-    return () => window.removeEventListener("session-expired", expired);
+-  }, [boot]);
++    window.addEventListener("session-expired", endSession);
++    return () => window.removeEventListener("session-expired", endSession);
++  }, [boot, endSession]);
+   useEffect(() => {
+     if (!notice) return;
+@@ -375,6 +372,5 @@ export default function App() {
+     setRefreshing(true);
+     try {
+-      await loadState();
+-      setRevision((value) => value + 1);
++      await session?.cache.refreshActive();
+     } catch (failure) {
+       notify(errorMessage(failure), true);
+@@ -386,9 +382,5 @@ export default function App() {
+     try {
+       await api("/logout", "POST");
+-      stateRequestSequence.current += 1;
+-      setNavigationId(++navigationSequence.current);
+-      setPageLoading(independentlyLoadedPages.includes(currentPage.current));
+-      setPageError("");
+-      setState(null);
++      endSession();
+     } catch (failure) {
+       notify(errorMessage(failure), true);
+@@ -420,13 +412,12 @@ export default function App() {
+       </div>
+     );
+-  if (!state)
++  if (!session)
+     return (
+       <>
+-        <Authentication initialized={!!initialized} turnstileSiteKey={turnstileSiteKey} onSuccess={loadState} />
++        <Authentication initialized={!!initialized} turnstileSiteKey={turnstileSiteKey} onSuccess={boot} />
+         {notice && <Toast {...notice} onClose={() => setNotice(null)} />}
+       </>
+     );
+   const activePage = navigation.find((item) => item.id === page)!;
+-  const props = { state, reload: loadState, notify };
+   return (
+     <div className={`app-shell ${mobileNav ? "mobile-nav-open" : ""}`}>
+@@ -460,5 +451,7 @@ export default function App() {
+               <button
+                 className={`nav-item ${page === item.id ? "active" : ""}`}
+-                onClick={() => void navigate(item.id)}
++                onPointerEnter={() => warmCode(item.id)}
++                onFocus={() => warmCode(item.id)}
++                onClick={() => navigate(item.id)}
+                 aria-current={page === item.id ? "page" : undefined}
+               >
+@@ -528,11 +521,11 @@ export default function App() {
+             <IconButton
+               title="刷新数据"
+-              disabled={refreshing || pageLoading}
++              disabled={refreshing}
+               onClick={() => void refresh()}
+             >
+               <RefreshCw size={17} className={refreshing ? "spin" : ""} />
+             </IconButton>
+-            <span className="user-avatar" title={state.username}>
+-              {state.username?.slice(0, 1).toUpperCase() || "A"}
++            <span className="user-avatar" title={session.username}>
++              {session.username?.slice(0, 1).toUpperCase() || "A"}
+             </span>
+             <IconButton title="退出登录" onClick={() => void logout()}>
+@@ -542,40 +535,20 @@ export default function App() {
+         </header>
+         <main className={`main-content${page === "playground" ? " playground-main" : ""}`}>
+-          {pageError && <div className="page-load-error" role="alert">
+-            <ErrorBox message={`未能更新${activePage.label}：${pageError}`} />
+-            <Button className="small-button" onClick={() => void navigate(page, true)}>
+-              <RefreshCw size={15} />重新加载
+-            </Button>
+-          </div>}
+-          {/* Keep page effects mounted so requests can finish while the content is hidden. */}
+-          <div className="page-content" hidden={pageLoading} inert={pageLoading}>
+-          {page === "dashboard" && (
+-            <Dashboard revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
+-          )}
+-          {page === "playground" && !pageLoading && <Suspense fallback={<div className="full-loading"><LoaderCircle className="spin" size={23} />正在加载游乐场</div>}><Playground state={state} notify={notify} /></Suspense>}
+-          {page === "groups" && !pageLoading && <GroupsPage {...props} />}
+-          {page === "accounts" && !pageLoading && <AccountsPage {...props} />}
+-          {page === "keys" && !pageLoading && <KeysPage {...props} />}
+-          {page === "providers" && (
+-            <ProvidersPage revision={revision} notify={notify} onLoadingChange={reportPageLoading} />
+-          )}
+-          {page === "logs" && (
+-            <RequestLogs revision={revision} notify={notify} state={state} onLoadingChange={reportPageLoading} />
+-          )}
+-          {page === "settings" && !pageLoading && (
+-            <SettingsPage
+-              {...props}
+-              updateCheck={updateCheck}
+-              updateFocusRequest={updateFocusRequest}
+-            />
+-          )}
++          <div className="page-content">
++            <Resources.Provider value={session.cache}>
++              <PageBoundary key={page}>
++                <Suspense fallback={<Loading label={activePage.label} />}>
++                  {page === "dashboard" && <Dashboard notify={notify} />}
++                  {page === "playground" && <Playground notify={notify} />}
++                  {page === "groups" && <GroupsPage notify={notify} />}
++                  {page === "accounts" && <AccountsPage notify={notify} />}
++                  {page === "keys" && <KeysPage notify={notify} />}
++                  {page === "providers" && <ProvidersPage notify={notify} />}
++                  {page === "logs" && <RequestLogs notify={notify} />}
++                  {page === "settings" && <SettingsPage username={session.username} notify={notify} updateCheck={updateCheck} updateFocusRequest={updateFocusRequest} />}
++                </Suspense>
++              </PageBoundary>
++            </Resources.Provider>
+           </div>
+-          {pageLoading && <section className="page-loading-state" aria-label={`${activePage.label}加载中`}>
+-            <div className="page-loading-card" role="status" aria-live="polite" aria-atomic="true">
+-              <span className="page-loading-symbol" aria-hidden="true"><LoaderCircle className="spin page-loading-spinner" size={42} strokeWidth={1.6} /></span>
+-              <strong>正在加载{activePage.label}</strong>
+-              <span>正在获取最新数据，请稍候…</span>
+-            </div>
+-          </section>}
+         </main>
+         <footer className="workspace-footer">
+diff --git a/web/src/ChatMarkdown.tsx b/web/src/ChatMarkdown.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..9db4305287b476a10310afe0efdba8e392d384e3
+--- /dev/null
++++ b/web/src/ChatMarkdown.tsx
+@@ -0,0 +1,7 @@
++import ReactMarkdown from "react-markdown";
++import remarkGfm from "remark-gfm";
++
++const plugins = [remarkGfm];
++export default function ChatMarkdown({ text }: { text: string }) {
++  return <ReactMarkdown remarkPlugins={plugins}>{text}</ReactMarkdown>;
++}
+diff --git a/web/src/Dashboard.tsx b/web/src/Dashboard.tsx
+index b81f0b93572c62aff2f07048408410aba231636e..8a880c0bca646bcff4d10a2a405b0661fb6ea8ae 100644
+--- a/web/src/Dashboard.tsx
++++ b/web/src/Dashboard.tsx
+@@ -1,3 +1,3 @@
+-import { useEffect, useMemo, useState } from "react";
++import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+ import {
+   ArrowDownLeft,
+@@ -16,36 +16,15 @@ import {
+ } from "lucide-react";
+ import {
+-  Area,
+-  AreaChart,
+-  CartesianGrid,
+-  ResponsiveContainer,
+-  Tooltip,
+-  XAxis,
+-  YAxis,
+-} from "recharts";
+-import {
+-  api,
+   compactCount,
+   emptyStats,
+-  errorMessage,
+   number,
+   percent,
+   tokenCount,
+ } from "./api";
++import { Loading, useResource } from "./resources";
+ import type { Stats } from "./api";
+ import { Badge, Button, ErrorBox, IconButton } from "./components";
+ import type { Notice } from "./components";
+ 
+-// Chart colours mirror the .series-* legend classes in style.css.
+-const CHART = {
+-  primary: "#e04c8b",
+-  soft: "#ff9cc2",
+-  honey: "#e9a512",
+-  lilac: "#9b7be6",
+-  grid: "#fbe1ec",
+-  tick: "#8f6378",
+-  ink: "#4a2a3d",
+-} as const;
+-
+ function beginning(daysAgo: number) {
+   const date = new Date();
+@@ -54,51 +33,20 @@ function beginning(daysAgo: number) {
+ }
+ 
+-export function Dashboard({
+-  revision,
+-  notify,
+-  onLoadingChange,
+-}: {
+-  revision: number;
+-  notify: Notice;
+-  onLoadingChange?: (loading: boolean) => void;
+-}) {
+-  const [from, setFrom] = useState(beginning(6));
+-  const [to, setTo] = useState(beginning(0));
++const DashboardChart = lazy(() => import("./DashboardChart"));
++export function Dashboard({ notify }: { notify: Notice }) {
++  const [from, setFrom] = useState(() => beginning(6));
++  const [to, setTo] = useState(() => beginning(0));
+   const [query, setQuery] = useState({ from, to });
+-  const [stats, setStats] = useState<Stats>(emptyStats);
+-  const [loading, setLoading] = useState(true);
+-  const [error, setError] = useState("");
+-  const [retry, setRetry] = useState(0);
++  const start = Date.parse(`${query.from}T00:00:00Z`) / 1000;
++  const end = Date.parse(`${query.to}T23:59:59Z`) / 1000;
++  const { data, loading, error, load } = useResource<Stats>(`/stats?from=${start}&to=${end}&recent=false`);
++  const stats = data ?? emptyStats;
+   const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
+-  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
+   useEffect(() => {
+-    let cancelled = false;
+-    const load = async (initial: boolean) => {
+-      if (initial) setLoading(true);
+-      try {
+-        const start = Math.floor(
+-          new Date(`${query.from}T00:00:00Z`).getTime() / 1000,
+-        );
+-        const end = Math.floor(
+-          new Date(`${query.to}T23:59:59Z`).getTime() / 1000,
+-        );
+-        const result = await api<Stats>(`/stats?from=${start}&to=${end}`);
+-        if (!cancelled) {
+-          setStats(result);
+-          setError("");
+-        }
+-      } catch (failure) {
+-        if (!cancelled) setError(errorMessage(failure));
+-      } finally {
+-        if (!cancelled) setLoading(false);
+-      }
+-    };
+-    void load(true);
+-    const interval = window.setInterval(() => void load(false), 30_000);
+-    return () => {
+-      cancelled = true;
+-      window.clearInterval(interval);
+-    };
+-  }, [query, revision, retry]);
++    const visible = () => { if (!document.hidden) void load(); };
++    const timer = window.setInterval(() => { if (!document.hidden) void load(true); }, 30_000);
++    document.addEventListener("visibilitychange", visible);
++    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
++  }, [load]);
+   const chartData = useMemo(() => {
+     const rows = new Map(
+@@ -205,5 +153,5 @@ export function Dashboard({
+         <div className="inline-error">
+           <ErrorBox message={error} />
+-          <Button onClick={() => setRetry((value) => value + 1)}>
++          <Button onClick={() => void load(true)}>
+             <RefreshCw size={15} />
+             重试
+@@ -211,4 +159,6 @@ export function Dashboard({
+         </div>
+       )}
++      {!data && loading && <Loading label="统计数据" />}
++      {data && <>
+       <div
+         className={`metrics-grid ${loading ? "is-loading" : ""}`}
+@@ -382,121 +332,5 @@ export function Dashboard({
+           </div>
+           <div className="chart">
+-            <ResponsiveContainer width="100%" height="100%">
+-              <AreaChart
+-                data={chartData}
+-                margin={{ top: 10, right: 12, bottom: 0, left: -15 }}
+-              >
+-                <defs>
+-                  {(["primary", "soft", "honey", "lilac"] as const).map((tone) => (
+-                    <linearGradient key={tone} id={`zako-fill-${tone}`} x1="0" y1="0" x2="0" y2="1">
+-                      <stop offset="0%" stopColor={CHART[tone]} stopOpacity={0.32} />
+-                      <stop offset="100%" stopColor={CHART[tone]} stopOpacity={0.02} />
+-                    </linearGradient>
+-                  ))}
+-                </defs>
+-                <CartesianGrid
+-                  stroke={CHART.grid}
+-                  strokeDasharray="4 6"
+-                  vertical={false}
+-                />
+-                <XAxis
+-                  dataKey="date"
+-                  tick={{ fontSize: 11, fill: CHART.tick }}
+-                  axisLine={false}
+-                  tickLine={false}
+-                  minTickGap={25}
+-                  dy={8}
+-                />
+-                <YAxis
+-                  tickFormatter={metric === "tokens" ? tokenCount : compactCount}
+-                  tick={{ fontSize: 11, fill: CHART.tick }}
+-                  axisLine={false}
+-                  tickLine={false}
+-                  allowDecimals={false}
+-                  width={metric === "tokens" ? 72 : 60}
+-                  domain={[0, "auto"]}
+-                />
+-                <Tooltip
+-                  cursor={{ stroke: CHART.soft, strokeDasharray: "4 4" }}
+-                  contentStyle={{
+-                    borderRadius: 16,
+-                    border: `1.5px solid ${CHART.grid}`,
+-                    fontSize: 12,
+-                    boxShadow: "0 12px 28px -12px rgb(214 55 122 / 35%)",
+-                  }}
+-                  itemStyle={{ color: CHART.ink }}
+-                  formatter={(value) =>
+-                    metric === "tokens" ? (
+-                      <span title={number(Number(value || 0))}>
+-                        {tokenCount(Number(value || 0))}
+-                      </span>
+-                    ) : (
+-                      compactCount(Number(value || 0))
+-                    )
+-                  }
+-                  labelStyle={{ color: CHART.tick, fontWeight: 700, marginBottom: 7 }}
+-                />
+-                {metric === "tokens" ? (
+-                  <>
+-                    <Area
+-                      isAnimationActive={false}
+-                      type="monotone"
+-                      stackId="tokens"
+-                      dataKey="uncached"
+-                      name="未缓存输入"
+-                      stroke={CHART.primary}
+-                      fill="url(#zako-fill-primary)"
+-                      fillOpacity={1}
+-                      strokeWidth={2}
+-                    />
+-                    <Area
+-                      isAnimationActive={false}
+-                      type="monotone"
+-                      stackId="tokens"
+-                      dataKey="cached"
+-                      name="缓存输入"
+-                      stroke={CHART.soft}
+-                      fill="url(#zako-fill-soft)"
+-                      fillOpacity={1}
+-                      strokeWidth={1.5}
+-                    />
+-                    <Area
+-                      isAnimationActive={false}
+-                      type="monotone"
+-                      stackId="tokens"
+-                      dataKey="output"
+-                      name="输出"
+-                      stroke={CHART.honey}
+-                      fill="url(#zako-fill-honey)"
+-                      fillOpacity={1}
+-                      strokeWidth={1.5}
+-                    />
+-                  </>
+-                ) : (
+-                  <>
+-                    <Area
+-                      isAnimationActive={false}
+-                      type="monotone"
+-                      dataKey="requests"
+-                      name="总请求"
+-                      stroke={CHART.primary}
+-                      fill="url(#zako-fill-primary)"
+-                      fillOpacity={1}
+-                      strokeWidth={2}
+-                    />
+-                    <Area
+-                      isAnimationActive={false}
+-                      type="monotone"
+-                      dataKey="cyber"
+-                      name="Cyber 事件"
+-                      stroke={CHART.lilac}
+-                      fill="url(#zako-fill-lilac)"
+-                      fillOpacity={1}
+-                      strokeWidth={1.5}
+-                    />
+-                  </>
+-                )}
+-              </AreaChart>
+-            </ResponsiveContainer>
++            <Suspense fallback={<Loading label="图表" />}><DashboardChart data={chartData} metric={metric} /></Suspense>
+           </div>
+           <div className="chart-bottom">
+@@ -577,4 +411,5 @@ export function Dashboard({
+         </section>
+       </div>
++      </>}
+     </>
+   );
+diff --git a/web/src/DashboardChart.tsx b/web/src/DashboardChart.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..2c127df2165cc6a891a13a1b3613a3d9667a06e2
+--- /dev/null
++++ b/web/src/DashboardChart.tsx
+@@ -0,0 +1,144 @@
++import {
++  Area,
++  AreaChart,
++  CartesianGrid,
++  ResponsiveContainer,
++  Tooltip,
++  XAxis,
++  YAxis,
++} from "recharts";
++import { compactCount, number, tokenCount } from "./api";
++
++// Chart colours mirror the .series-* legend classes in style.css.
++const CHART = {
++  primary: "#e04c8b",
++  soft: "#ff9cc2",
++  honey: "#e9a512",
++  lilac: "#9b7be6",
++  grid: "#fbe1ec",
++  tick: "#8f6378",
++  ink: "#4a2a3d",
++} as const;
++
++type Point = { date: string; uncached: number; cached: number; output: number; requests: number; cyber: number };
++export default function DashboardChart({ data, metric }: { data: Point[]; metric: "tokens" | "requests" }) {
++  return (
++    <ResponsiveContainer width="100%" height="100%">
++      <AreaChart
++        data={data}
++        margin={{ top: 10, right: 12, bottom: 0, left: -15 }}
++      >
++        <defs>
++          {(["primary", "soft", "honey", "lilac"] as const).map((tone) => (
++            <linearGradient key={tone} id={`zako-fill-${tone}`} x1="0" y1="0" x2="0" y2="1">
++              <stop offset="0%" stopColor={CHART[tone]} stopOpacity={0.32} />
++              <stop offset="100%" stopColor={CHART[tone]} stopOpacity={0.02} />
++            </linearGradient>
++          ))}
++        </defs>
++        <CartesianGrid
++          stroke={CHART.grid}
++          strokeDasharray="4 6"
++          vertical={false}
++        />
++        <XAxis
++          dataKey="date"
++          tick={{ fontSize: 11, fill: CHART.tick }}
++          axisLine={false}
++          tickLine={false}
++          minTickGap={25}
++          dy={8}
++        />
++        <YAxis
++          tickFormatter={metric === "tokens" ? tokenCount : compactCount}
++          tick={{ fontSize: 11, fill: CHART.tick }}
++          axisLine={false}
++          tickLine={false}
++          allowDecimals={false}
++          width={metric === "tokens" ? 72 : 60}
++          domain={[0, "auto"]}
++        />
++        <Tooltip
++          cursor={{ stroke: CHART.soft, strokeDasharray: "4 4" }}
++          contentStyle={{
++            borderRadius: 16,
++            border: `1.5px solid ${CHART.grid}`,
++            fontSize: 12,
++            boxShadow: "0 12px 28px -12px rgb(214 55 122 / 35%)",
++          }}
++          itemStyle={{ color: CHART.ink }}
++          formatter={(value) =>
++            metric === "tokens" ? (
++              <span title={number(Number(value || 0))}>
++                {tokenCount(Number(value || 0))}
++              </span>
++            ) : (
++              compactCount(Number(value || 0))
++            )
++          }
++          labelStyle={{ color: CHART.tick, fontWeight: 700, marginBottom: 7 }}
++        />
++        {metric === "tokens" ? (
++          <>
++            <Area
++              isAnimationActive={false}
++              type="monotone"
++              stackId="tokens"
++              dataKey="uncached"
++              name="未缓存输入"
++              stroke={CHART.primary}
++              fill="url(#zako-fill-primary)"
++              fillOpacity={1}
++              strokeWidth={2}
++            />
++            <Area
++              isAnimationActive={false}
++              type="monotone"
++              stackId="tokens"
++              dataKey="cached"
++              name="缓存输入"
++              stroke={CHART.soft}
++              fill="url(#zako-fill-soft)"
++              fillOpacity={1}
++              strokeWidth={1.5}
++            />
++            <Area
++              isAnimationActive={false}
++              type="monotone"
++              stackId="tokens"
++              dataKey="output"
++              name="输出"
++              stroke={CHART.honey}
++              fill="url(#zako-fill-honey)"
++              fillOpacity={1}
++              strokeWidth={1.5}
++            />
++          </>
++        ) : (
++          <>
++            <Area
++              isAnimationActive={false}
++              type="monotone"
++              dataKey="requests"
++              name="总请求"
++              stroke={CHART.primary}
++              fill="url(#zako-fill-primary)"
++              fillOpacity={1}
++              strokeWidth={2}
++            />
++            <Area
++              isAnimationActive={false}
++              type="monotone"
++              dataKey="cyber"
++              name="Cyber 事件"
++              stroke={CHART.lilac}
++              fill="url(#zako-fill-lilac)"
++              fillOpacity={1}
++              strokeWidth={1.5}
++            />
++          </>
++        )}
++      </AreaChart>
++    </ResponsiveContainer>
++  );
++}
+diff --git a/web/src/Management.tsx b/web/src/Management.tsx
+index 485ad7c00241c66ede81b13cc7ad9131965a3abc..7abf89490b29e13f6e79d16a09bc719a65fa73c7 100644
+--- a/web/src/Management.tsx
++++ b/web/src/Management.tsx
+@@ -22,5 +22,5 @@ import {
+ } from "lucide-react";
+ import { api, copy, errorMessage, number, time, tokenCount } from "./api";
+-import type { Account, Group, Profile, ProfileTemplate, ProviderBinding, ProxyTestResult, RelayKey, State } from "./api";
++import type { Account, Group, Profile, ProfileTemplate, ProviderBinding, ProxyTestResult, RelayKey, KeyInfo } from "./api";
+ import {
+   Badge,
+@@ -39,13 +39,11 @@ import {
+ } from "./components";
+ import type { Notice } from "./components";
++import { keyListPath, ResourceStatus, useResource, useResources } from "./resources";
+ import { GroupSelect } from "./GroupSelect";
+ import { ProviderAccountImport } from "./ProviderAccountImport";
+ import type { ProviderAccountSelection } from "./ProviderAccountImport";
+ 
+-export type PageProps = {
+-  state: State;
+-  reload: () => Promise<void>;
+-  notify: Notice;
+-};
++type Actions = { notify: Notice; reload: () => void };
++const none: never[] = [];
+ 
+ const modelNameOrder = new Intl.Collator("en", {
+@@ -64,5 +62,5 @@ function DeleteDialog({
+   item: { id: string; name: string };
+   onClose: () => void;
+-  reload: () => Promise<void>;
++  reload: () => void;
+   notify: Notice;
+ }) {
+@@ -75,5 +73,5 @@ function DeleteDialog({
+     try {
+       await api(`/${resource}/${item.id}`, "DELETE");
+-      await reload();
++      reload();
+       onClose();
+       notify(`${label}已删除`);
+@@ -104,5 +102,5 @@ function PageHeading({
+   eyebrow: string;
+   title: string;
+-  count: number;
++  count?: number;
+   children: React.ReactNode;
+ }) {
+@@ -113,5 +111,5 @@ function PageHeading({
+         <h1>
+           {title}
+-          <span className="title-count">{count}</span>
++          <span className="title-count">{count ?? "—"}</span>
+         </h1>
+       </div>
+@@ -121,12 +119,23 @@ function PageHeading({
+ }
+ 
++// Keep search and dialogs responsive: filter the full list, mount only one page of rows.
++function useTablePage<T>(items: T[], filter: string) {
++  const [selection, setSelection] = useState({ filter, page: 1 });
++  const pages = Math.max(1, Math.ceil(items.length / 50));
++  const page = selection.filter === filter ? Math.min(selection.page, pages) : 1;
++  return { rows: items.slice((page - 1) * 50, page * 50), page, pages,
++    changePage: (next: number) => setSelection({ filter, page: next }) };
++}
++
+ function TableFooter({
+   count,
+   total,
+   noun,
++  pagination,
+ }: {
+   count: number;
+   total: number;
+   noun: string;
++  pagination: { page: number; pages: number; changePage: (page: number) => void };
+ }) {
+   return (
+@@ -137,5 +146,9 @@ function TableFooter({
+           : `筛选到 ${count} / ${total} 个${noun}`}
+       </span>
+-      <span>所有更改即时生效</span>
++      {pagination.pages > 1 ? <div className="table-pages">
++        <Button className="small-button" disabled={pagination.page <= 1} onClick={() => pagination.changePage(pagination.page - 1)}>上一页</Button>
++        <span aria-live="polite">{pagination.page} / {pagination.pages}</span>
++        <Button className="small-button" disabled={pagination.page >= pagination.pages} onClick={() => pagination.changePage(pagination.page + 1)}>下一页</Button>
++      </div> : <span>所有更改即时生效</span>}
+     </div>
+   );
+@@ -171,13 +184,25 @@ function profilesSupportedByGroup(groupId: string, accounts: Account[], profiles
+ }
+ 
+-export function GroupsPage({ state, reload, notify }: PageProps) {
++export function GroupsPage({ notify }: { notify: Notice }) {
++  const cache = useResources();
++  const groups = useResource<Group[]>("/groups");
++  const accounts = useResource<Account[]>("/accounts");
++  const keys = useResource<KeyInfo[]>(keyListPath);
++  const reload = () => cache.invalidate("/groups");
++  const state = { groups: groups.data ?? none, accounts: accounts.data ?? none, keys: keys.data ?? none };
++  const counts = useMemo(() => {
++    const accountsByGroup = new Map<string, number>(), keysByGroup = new Map<string, number>();
++    for (const account of accounts.data ?? none) for (const id of account.group_ids) accountsByGroup.set(id, (accountsByGroup.get(id) ?? 0) + 1);
++    for (const key of keys.data ?? none) keysByGroup.set(key.group_id, (keysByGroup.get(key.group_id) ?? 0) + 1);
++    return { accountsByGroup, keysByGroup };
++  }, [accounts.data, keys.data]);
+   const [search, setSearch] = useState("");
+   const [editing, setEditing] = useState<Group | "new" | null>(null);
+   const [deleting, setDeleting] = useState<Group | null>(null);
+-  const filtered = state.groups.filter((group) =>
+-    `${group.name} ${group.description || ""}`
+-      .toLowerCase()
+-      .includes(search.toLowerCase()),
+-  );
++  const filtered = useMemo(() => {
++    const query = search.toLowerCase();
++    return state.groups.filter((group) => `${group.name} ${group.description || ""}`.toLowerCase().includes(query));
++  }, [state.groups, search]);
++  const pagination = useTablePage(filtered, search);
+   return (
+     <>
+@@ -185,5 +210,5 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+         eyebrow="ROUTING GROUPS"
+         title="分组管理"
+-        count={state.groups.length}
++        count={groups.data?.length}
+       >
+         <Button className="primary" onClick={() => setEditing("new")}>
+@@ -198,5 +223,5 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+           </span>
+           <span>
+-            分组<strong>{state.groups.length}</strong>
++            分组<strong>{groups.data?.length ?? "—"}</strong>
+           </span>
+         </div>
+@@ -206,5 +231,5 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+           </span>
+           <span>
+-            上游账号<strong>{state.accounts.length}</strong>
++            上游账号<strong>{accounts.data?.length ?? "—"}</strong>
+           </span>
+         </div>
+@@ -214,5 +239,5 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+           </span>
+           <span>
+-            密钥<strong>{state.keys.length}</strong>
++            密钥<strong>{keys.data?.length ?? "—"}</strong>
+           </span>
+         </div>
+@@ -230,5 +255,6 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+           </span>
+         </div>
+-        {filtered.length ? (
++        <ResourceStatus queries={[groups, accounts, keys]} label="列表数据" />
++        {!groups.data ? null : filtered.length ? (
+           <div className="table-scroll">
+             <table>
+@@ -243,5 +269,5 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+               </thead>
+               <tbody>
+-                {filtered.map((group) => {
++                {pagination.rows.map((group) => {
+                   return (
+                     <tr key={group.id}>
+@@ -268,13 +294,10 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+                       <td className="mono">
+                         {
+-                          state.accounts.filter((account) =>
+-                            account.group_ids.includes(group.id),
+-                          ).length
++                          accounts.data ? counts.accountsByGroup.get(group.id) ?? 0 : "—"
+                         }
+                       </td>
+                       <td className="mono">
+                         {
+-                          state.keys.filter((key) => key.group_id === group.id)
+-                            .length
++                          keys.data ? counts.keysByGroup.get(group.id) ?? 0 : "—"
+                         }
+                       </td>
+@@ -317,4 +340,5 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+         )}
+         <TableFooter
++          pagination={pagination}
+           count={filtered.length}
+           total={state.groups.length}
+@@ -325,5 +349,4 @@ export function GroupsPage({ state, reload, notify }: PageProps) {
+         <GroupForm
+           group={editing === "new" ? undefined : editing}
+-          state={state}
+           reload={reload}
+           notify={notify}
+@@ -349,5 +372,5 @@ function GroupForm({
+   notify,
+   onClose,
+-}: PageProps & { group?: Group; onClose: () => void }) {
++}: Actions & { group?: Group; onClose: () => void }) {
+   const [name, setName] = useState(group?.name || "");
+   const [description, setDescription] = useState(group?.description || "");
+@@ -367,5 +390,5 @@ function GroupForm({
+         },
+       );
+-      await reload();
++      reload();
+       onClose();
+       notify(group ? "分组已更新" : "分组已创建");
+@@ -415,17 +438,21 @@ function GroupForm({
+ }
+ 
+-export function AccountsPage({ state, reload, notify }: PageProps) {
++export function AccountsPage({ notify }: { notify: Notice }) {
++  const cache = useResources();
++  const accounts = useResource<Account[]>("/accounts");
++  const groups = useResource<Group[]>("/groups");
++  const state = { accounts: accounts.data ?? none, groups: groups.data ?? none };
++  const groupNames = useMemo(() => new Map(groups.data?.map((g) => [g.id, g.name])), [groups.data]);
++  const reload = () => cache.invalidate("/accounts", "/keys", "/profiles", "/stats", "/logs", "/playground/models");
+   const [search, setSearch] = useState("");
+   const [filter, setFilter] = useState("all");
+   const [editing, setEditing] = useState<Account | "new" | null>(null);
+   const [deleting, setDeleting] = useState<Account | null>(null);
+-  const filtered = state.accounts.filter(
+-    (account) =>
+-      `${account.name} ${account.endpoint}`
+-        .toLowerCase()
+-        .includes(search.toLowerCase()) &&
+-      (filter === "all" ||
+-        (filter === "enabled" ? account.enabled : !account.enabled)),
+-  );
++  const filtered = useMemo(() => {
++    const query = search.toLowerCase();
++    return state.accounts.filter((account) => `${account.name} ${account.endpoint}`.toLowerCase().includes(query)
++      && (filter === "all" || (filter === "enabled" ? account.enabled : !account.enabled)));
++  }, [state.accounts, search, filter]);
++  const pagination = useTablePage(filtered, `${filter}:${search}`);
+   const cooling = state.accounts.filter(
+     (account) => (account.runtime?.cooldown_until || 0) > Date.now() / 1000,
+@@ -436,5 +463,5 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+         eyebrow="UPSTREAM ACCOUNTS"
+         title="账号管理"
+-        count={state.accounts.length}
++        count={accounts.data?.length}
+       >
+         <Button className="primary" onClick={() => setEditing("new")}>
+@@ -489,5 +516,6 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+           </Select>
+         </div>
+-        {filtered.length ? (
++        <ResourceStatus queries={[accounts, groups]} label="列表数据" />
++        {!accounts.data ? null : filtered.length ? (
+           <div className="table-scroll">
+             <table>
+@@ -504,5 +532,5 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+               </thead>
+               <tbody>
+-                {filtered.map((account) => (
++                {pagination.rows.map((account) => (
+                   <tr key={account.id}>
+                     <td>
+@@ -534,6 +562,5 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+                         {account.group_ids.map((id) => (
+                           <Badge key={id}>
+-                            {state.groups.find((group) => group.id === id)
+-                              ?.name || "未知分组"}
++                            {groupNames.get(id) || "未知分组"}
+                           </Badge>
+                         ))}
+@@ -613,4 +640,5 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+         )}
+         <TableFooter
++          pagination={pagination}
+           count={filtered.length}
+           total={state.accounts.length}
+@@ -618,5 +646,6 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+         />
+       </section>
+-      {editing && (
++      {editing && !groups.data && <Modal title="上游账号" onClose={() => setEditing(null)} wide><ResourceStatus queries={[groups]} label="分组" /></Modal>}
++      {editing && groups.data && (
+         <AccountForm
+           account={editing === "new" ? undefined : editing}
+@@ -624,8 +653,8 @@ export function AccountsPage({ state, reload, notify }: PageProps) {
+           reload={reload}
+           notify={notify}
+-          onClose={() => {
++          onClose={(saved) => {
+             const refreshBinding = editing !== "new" && Boolean(editing.provider_binding);
+             setEditing(null);
+-            if (refreshBinding) void reload().catch((failure) => notify(errorMessage(failure), true));
++            if (saved !== true && refreshBinding) reload();
+           }}
+         />
+@@ -650,5 +679,5 @@ function AccountForm({
+   notify,
+   onClose,
+-}: PageProps & { account?: Account; onClose: () => void }) {
++}: Actions & { state: { groups: Group[] }; account?: Account; onClose: (saved?: boolean) => void }) {
+   const [importSource, setImportSource] = useState<"api" | "provider">(account?.provider_binding ? "provider" : "api");
+   const [providerBinding, setProviderBinding] = useState<ProviderBinding | null>(account?.provider_binding || null);
+@@ -831,6 +860,6 @@ function AccountForm({
+         },
+       );
+-      await reload();
+-      onClose();
++      reload();
++      onClose(true);
+       notify(account ? "账号已更新" : "账号已添加");
+     } catch (failure) {
+@@ -1200,5 +1229,11 @@ function AccountForm({
+ }
+ 
+-export function KeysPage({ state, reload, notify }: PageProps) {
++export function KeysPage({ notify }: { notify: Notice }) {
++  const cache = useResources();
++  const keys = useResource<RelayKey[]>("/keys");
++  const groups = useResource<Group[]>("/groups");
++  const state = { keys: keys.data ?? none, groups: groups.data ?? none };
++  const groupNames = useMemo(() => new Map(groups.data?.map((g) => [g.id, g.name])), [groups.data]);
++  const reload = () => cache.invalidate("/keys", "/profiles", "/logs", "/stats", "/playground/models");
+   const [search, setSearch] = useState("");
+   const [editing, setEditing] = useState<RelayKey | "new" | null>(null);
+@@ -1218,4 +1253,5 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+     [state.keys, search],
+   );
++  const pagination = useTablePage(filtered, search);
+   async function copyKey(id: string) {
+     setCopying(id);
+@@ -1235,5 +1271,5 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+         eyebrow="API ACCESS KEYS"
+         title="密钥管理"
+-        count={state.keys.length}
++        count={keys.data?.length}
+       >
+         <Button className="primary" onClick={() => setEditing("new")}>
+@@ -1274,5 +1310,6 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+           </span>
+         </div>
+-        {filtered.length ? (
++        <ResourceStatus queries={[keys, groups]} label="列表数据" />
++        {!keys.data ? null : filtered.length ? (
+           <div className="table-scroll">
+             <table>
+@@ -1289,5 +1326,5 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+               </thead>
+               <tbody>
+-                {filtered.map((key) => (
++                {pagination.rows.map((key) => (
+                   <tr key={key.id}>
+                     <td>
+@@ -1317,6 +1354,5 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+                     <td>
+                       <Badge>
+-                        {state.groups.find((group) => group.id === key.group_id)
+-                          ?.name || "未知分组"}
++                        {groupNames.get(key.group_id) || "未知分组"}
+                       </Badge>
+                     </td>
+@@ -1384,4 +1420,5 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+         )}
+         <TableFooter
++          pagination={pagination}
+           count={filtered.length}
+           total={state.keys.length}
+@@ -1390,7 +1427,6 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+       </section>
+       {editing && (
+-        <KeyForm
++        <KeyEditor
+           relayKey={editing === "new" ? undefined : editing}
+-          state={state}
+           reload={reload}
+           notify={notify}
+@@ -1452,15 +1488,31 @@ export function KeysPage({ state, reload, notify }: PageProps) {
+ }
+ 
++type KeyEditorProps = Actions & {
++  relayKey?: RelayKey; onClose: () => void; onCreated: (name: string, key: string) => void;
++};
++function KeyEditor(props: KeyEditorProps) {
++  const groups = useResource<Group[]>("/groups");
++  const accounts = useResource<Account[]>("/accounts");
++  const profiles = useResource<Profile[]>("/profiles?summary=true");
++  const templates = useResource<ProfileTemplate[]>("/profile-templates");
++  if (!groups.data || !accounts.data || !profiles.data) return (
++    <Modal title={props.relayKey ? "编辑密钥" : "创建 API 密钥"} onClose={props.onClose} wide>
++      <ResourceStatus queries={[groups, accounts, profiles]} label="密钥选项" />
++    </Modal>
++  );
++  return <KeyForm {...props} state={{ groups: groups.data, accounts: accounts.data, profiles: profiles.data }} templatesQuery={templates} />;
++}
++
+ function KeyForm({
+   relayKey,
+   state,
++  templatesQuery,
+   reload,
+   notify,
+   onClose,
+   onCreated,
+-}: PageProps & {
+-  relayKey?: RelayKey;
+-  onClose: () => void;
+-  onCreated: (name: string, key: string) => void;
++}: KeyEditorProps & {
++  state: { groups: Group[]; accounts: Account[]; profiles: Profile[] };
++  templatesQuery: ReturnType<typeof useResource<ProfileTemplate[]>>;
+ }) {
+   const [name, setName] = useState(relayKey?.name || "");
+@@ -1474,7 +1526,7 @@ function KeyForm({
+   );
+   const [profileSearch, setProfileSearch] = useState("");
+-  const [templates, setTemplates] = useState<ProfileTemplate[]>([]);
++  const templates = templatesQuery.data ?? none;
+   const [templateError, setTemplateError] = useState("");
+-  const [templateLoading, setTemplateLoading] = useState(true);
++  const templateLoading = !templatesQuery.data && templatesQuery.loading;
+   const [templateId, setTemplateId] = useState("");
+   const [templateModel, setTemplateModel] = useState("");
+@@ -1491,12 +1543,4 @@ function KeyForm({
+     [group, state.accounts],
+   );
+-  useEffect(() => {
+-    let active = true;
+-    void api<ProfileTemplate[]>("/profile-templates")
+-      .then((items) => { if (active) setTemplates(items); })
+-      .catch((failure) => { if (active) setTemplateError(errorMessage(failure)); })
+-      .finally(() => { if (active) setTemplateLoading(false); });
+-    return () => { active = false; };
+-  }, []);
+   const selectedGroup = state.groups.find((item) => item.id === group);
+   const supportedProfiles = useMemo(
+@@ -1561,5 +1605,5 @@ function KeyForm({
+     const profile: Profile = {
+       id, name: `${template.name} · ${templateModel}`, models: [templateModel],
+-      model_family: "custom", instruction: "",
++      model_family: "custom",
+       metadata: { source_url: template.source_url, source_revision: template.source_revision,
+         variant: template.id, validation: template.validation },
+@@ -1592,5 +1636,5 @@ function KeyForm({
+         },
+       );
+-      await reload();
++      reload();
+       onClose();
+       if (result.key) onCreated(name, result.key);
+@@ -1658,5 +1702,6 @@ function KeyForm({
+             {!actualModels.length && <p className="field-hint">请先在此分组的已启用账号中配置模型。</p>}
+             <p className="field-hint">应用后替换该模型已选的策略，保存密钥后生效。</p>
+-            {templateError && <ErrorBox message={templateError} />}
++            <ResourceStatus label="模板" queries={[templatesQuery]} />
++            <ErrorBox message={templateError} />
+           </details>
+           <div
+diff --git a/web/src/Playground.tsx b/web/src/Playground.tsx
+index d22d441620ff94011da34fb980d44962bcc1188e..f4187eddba444da867289b0f5a07e325f3e79c23 100644
+--- a/web/src/Playground.tsx
++++ b/web/src/Playground.tsx
+@@ -1,3 +1,3 @@
+-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
++import { lazy, memo, Suspense, useMemo, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+ import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
+ import {
+@@ -25,10 +25,9 @@ import {
+   X,
+ } from "lucide-react";
+-import type { State } from "./api";
++import type { Group, KeyInfo } from "./api";
++import { keyListPath, ResourceStatus, useResource } from "./resources";
+ import { errorMessage } from "./api";
+ import { ErrorBox } from "./components";
+ import type { Notice } from "./components";
+-import ReactMarkdown from "react-markdown";
+-import remarkGfm from "remark-gfm";
+ import "./playground.css";
+ 
+@@ -185,16 +184,24 @@ function Picker({ kind, label, value, options, disabled, onChange }: {
+ }
+ 
+-export function Playground({ state, notify }: { state: State; notify: Notice }) {
+-  const enabledKeys = state.keys.filter((key) => key.enabled);
+-  const [keyId, setKeyId] = useState(() => {
+-    const saved = localStorage.getItem("zako-playground-key");
+-    return enabledKeys.find((key) => key.id === saved)?.id || enabledKeys[0]?.id || "";
+-  });
+-  const selectedKey = enabledKeys.find((key) => key.id === keyId);
+-  const groups = state.groups.filter((group) => enabledKeys.some((key) => key.group_id === group.id));
+-  const [models, setModels] = useState<string[]>([]);
+-  const [model, setModel] = useState("");
+-  const [modelsBusy, setModelsBusy] = useState(false);
+-  const [modelsError, setModelsError] = useState("");
++const Markdown = lazy(() => import("./ChatMarkdown"));
++const MessageText = memo(function MessageText({ text }: { text: string }) {
++  return <Suspense fallback={text}><Markdown text={text} /></Suspense>;
++});
++export function Playground({ notify }: { notify: Notice }) {
++  const keys = useResource<KeyInfo[]>(keyListPath);
++  const groupList = useResource<Group[]>("/groups");
++  const enabledKeys = useMemo(() => keys.data?.filter((key) => key.enabled) ?? [], [keys.data]);
++  const [preferredKey, setKeyId] = useState(() => localStorage.getItem("zako-playground-key") ?? "");
++  const selectedKey = enabledKeys.find((key) => key.id === preferredKey) ?? enabledKeys[0];
++  const keyId = selectedKey?.id ?? "";
++  const groups = useMemo(() => {
++    const ids = new Set(enabledKeys.map((key) => key.group_id));
++    return groupList.data?.filter((group) => ids.has(group.id)) ?? [];
++  }, [groupList.data, enabledKeys]);
++  const modelList = useResource<{ models: string[] }>(keyId ? `/playground/models?key_id=${encodeURIComponent(keyId)}` : null);
++  const models = modelList.data?.models ?? [];
++  const modelsBusy = !modelList.data && modelList.loading;
++  const [preferredModel, setModel] = useState("");
++  const model = models.includes(preferredModel) ? preferredModel : models[0] ?? "";
+   const [messages, setMessages] = useState<Message[]>(() => {
+     try {
+@@ -255,56 +262,29 @@ export function Playground({ state, notify }: { state: State; notify: Notice })
+   const fileRef = useRef<HTMLInputElement>(null);
+ 
+-  useEffect(() => {
+-    if (!enabledKeys.some((key) => key.id === keyId)) setKeyId(enabledKeys[0]?.id || "");
+-  }, [enabledKeys, keyId]);
+-
+-  useEffect(() => {
+-    if (!keyId) {
+-      setModels([]);
+-      setModel("");
+-      return;
+-    }
+-    const controller = new AbortController();
+-    setModelsBusy(true);
+-    setModelsError("");
+-    fetch(`/api/playground/models?key_id=${encodeURIComponent(keyId)}`, {
+-      credentials: "same-origin",
+-      headers: { "X-Console-Path": window.location.pathname },
+-      signal: controller.signal,
+-    })
+-      .then(async (response) => {
+-        const body = await response.json();
+-        if (response.status === 401) window.dispatchEvent(new Event("session-expired"));
+-        if (!response.ok) throw new Error(responseError(body, `获取模型失败 (${response.status})`));
+-        return body as { models: string[] };
+-      })
+-      .then(({ models: available }) => {
+-        setModels(available);
+-        setModel((previous) => available.includes(previous) ? previous : available[0] || "");
+-      })
+-      .catch((failure) => {
+-        if (controller.signal.aborted) return;
+-        setModels([]);
+-        setModel("");
+-        setModelsError(errorMessage(failure));
+-      })
+-      .finally(() => { if (!controller.signal.aborted) setModelsBusy(false); });
+-    return () => controller.abort();
+-  }, [keyId]);
+-
+   useEffect(() => {
+     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+   }, [messages]);
+ 
+-  useEffect(() => {
+-    const stored = messages.slice(-50).map(({ raw, attachments: files, ...message }) => ({
+-      ...message,
+-      attachments: files?.map(({ kind, name, mime_type }) => ({ kind, name, mime_type })),
++  // While streaming, checkpoint at most once a second, and flush the last frame on exit.
++  const latestMessages = useRef(messages);
++  const lastPersisted = useRef<Message[] | null>(null);
++  const persistMessages = useCallback(() => {
++    if (latestMessages.current === lastPersisted.current) return;
++    const stored = latestMessages.current.slice(-50).map(({ raw, attachments: files, ...message }) => ({
++      ...message, attachments: files?.map(({ kind, name, mime_type }) => ({ kind, name, mime_type })),
+     }));
+     try { localStorage.setItem("zako-playground-messages", JSON.stringify(stored)); }
+-    catch { /* Storage can be full; the live conversation remains usable. */ }
+-  }, [messages]);
++    catch { /* Storage may be full; keep the live conversation usable. */ }
++    lastPersisted.current = latestMessages.current;
++  }, []);
++  useEffect(() => { latestMessages.current = messages; if (!busy) persistMessages(); }, [messages, busy, persistMessages]);
++  useEffect(() => {
++    if (!busy) return;
++    const timer = window.setInterval(persistMessages, 1000);
++    window.addEventListener("pagehide", persistMessages);
++    return () => { window.clearInterval(timer); window.removeEventListener("pagehide", persistMessages); persistMessages(); };
++  }, [busy, persistMessages]);
+ 
+-  useEffect(() => { localStorage.setItem("zako-playground-key", keyId); }, [keyId]);
++  useEffect(() => { if (keys.data) localStorage.setItem("zako-playground-key", keyId); }, [keyId, keys.data]);
+ 
+   useEffect(() => {
+@@ -535,4 +515,5 @@ export function Playground({ state, notify }: { state: State; notify: Notice })
+   return (
+     <div className="playground-page">
++      <ResourceStatus queries={[keys, groupList]} label="聊天配置" />
+       <div className="playground-layout">
+         <aside className={`playground-config ${settingsOpen ? "open" : ""}`} aria-label="游乐场设置">
+@@ -558,5 +539,5 @@ export function Playground({ state, notify }: { state: State; notify: Notice })
+                 <Picker kind="model" label="模型" value={model} options={models.filter((name) => name.toLowerCase().includes(modelSearch.toLowerCase()) || name === model).map((name) => ({ value: name, label: name }))} disabled={!models.length || modelsBusy || busy} onChange={setModel} />
+               </span>
+-              {modelsError && <small className="playground-field-error">{modelsError}</small>}
++              {modelList.error && <ResourceStatus label="模型" queries={[modelList]} />}
+             </label>
+             <label className="playground-field">
+@@ -614,5 +595,5 @@ export function Playground({ state, notify }: { state: State; notify: Notice })
+                   ].map(([label, prompt]) => <button key={label} type="button" onClick={() => { setDraft(prompt); inputRef.current?.focus(); }}>{label}</button>)}
+                 </div>
+-                {!enabledKeys.length && <p className="playground-empty-note">请先在“密钥管理”中创建并启用 API 密钥。</p>}
++                {keys.data && !enabledKeys.length && <p className="playground-empty-note">请先在“密钥管理”中创建并启用 API 密钥。</p>}
+                 {enabledKeys.length > 0 && !models.length && !modelsBusy && <p className="playground-empty-note">当前分组没有启用 Chat Completions 的模型。</p>}
+               </div>
+@@ -623,6 +604,6 @@ export function Playground({ state, notify }: { state: State; notify: Notice })
+                   <div className="playground-message-meta"><strong>{message.role === "user" ? "你" : "助手"}</strong></div>
+                   {message.attachments?.length ? <div className="playground-message-files">{message.attachments.map((file, fileIndex) => <span key={`${file.name}-${fileIndex}`}><Paperclip size={12} />{file.name}</span>)}</div> : null}
+-                  {message.reasoning && <details className="playground-reasoning" open><summary><Sparkles size={14} /><span>思考过程</span><ChevronDown size={14} /></summary><div className="playground-reasoning-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.reasoning}</ReactMarkdown></div></details>}
+-                  {message.content ? <div className="playground-message-text">{message.role === "assistant" ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown> : message.content}</div> : message.role === "assistant" && busy && index === messages.length - 1 ? <span className="playground-thinking"><i /><i /><i /><span>正在生成…</span></span> : null}
++                  {message.reasoning && <details className="playground-reasoning" open><summary><Sparkles size={14} /><span>思考过程</span><ChevronDown size={14} /></summary><div className="playground-reasoning-body"><MessageText text={message.reasoning} /></div></details>}
++                  {message.content ? <div className="playground-message-text">{message.role === "assistant" ? <MessageText text={message.content} /> : message.content}</div> : message.role === "assistant" && busy && index === messages.length - 1 ? <span className="playground-thinking"><i /><i /><i /><span>正在生成…</span></span> : null}
+                   {message.sources?.length ? <div className="playground-sources"><strong><Globe2 size={13} /> 搜索来源</strong>{message.sources.map((source, sourceIndex) => <a key={`${source.url}-${sourceIndex}`} href={source.url} target="_blank" rel="noreferrer" title={source.snippet}>{sourceIndex + 1}. {source.title}</a>)}</div> : null}
+                   {message.role === "assistant" && message.raw && <div className="playground-raw-toggle"><button type="button" onClick={() => setRawIndex(rawIndex === index ? null : index)}>{rawIndex === index ? "预览" : "原始响应"}</button>{rawIndex === index && <pre>{message.raw}</pre>}</div>}
+diff --git a/web/src/ProviderAccountImport.tsx b/web/src/ProviderAccountImport.tsx
+index d388c3a35fdc701b41f0e34cf0d5198d9dc5092e..561f573191c5ee3a31d54e99c67d5f37b6ab5879 100644
+--- a/web/src/ProviderAccountImport.tsx
++++ b/web/src/ProviderAccountImport.tsx
+@@ -1,2 +1,3 @@
++import { useResource } from "./resources";
+ import { useEffect, useId, useRef, useState } from "react";
+ import type { FormEvent, KeyboardEvent } from "react";
+@@ -207,11 +208,9 @@ export function ProviderAccountImport({ accountId, savedBinding, initialBinding,
+   onLoadingChange: (loading: boolean) => void;
+ }) {
+-  const [providers, setProviders] = useState<ProviderSummary[]>([]);
++  const { data, loading: providerLoading, error: providerError, load: loadProviders } = useResource<ProviderSummary[]>("/providers");
++  const providers = data ?? [];
+   const [providerId, setProviderId] = useState(initialBinding?.provider_id || "");
+   const [keyId, setKeyId] = useState(initialBinding?.key_id || "");
+   const [explicitKeySelection, setExplicitKeySelection] = useState(false);
+-  const [providerLoading, setProviderLoading] = useState(true);
+-  const [providerError, setProviderError] = useState("");
+-  const [providerRevision, setProviderRevision] = useState(0);
+   const [keyData, setKeyData] = useState<ProviderAccountKeys | null>(null);
+   const [keysLoading, setKeysLoading] = useState(Boolean(providerId));
+@@ -233,10 +232,4 @@ export function ProviderAccountImport({ accountId, savedBinding, initialBinding,
+   const ready = Boolean(selectedProvider && !providerUnavailable && !creatingFor && selectedKey?.available && keyData?.endpoint && !providerLoading && !providerError && !keysLoading && !keysError && !bindingLoading && savedSelectionAvailable);
+ 
+-  useEffect(() => {
+-    let canceled = false;
+-    setProviderLoading(true); setProviderError("");
+-    void api<ProviderSummary[]>("/providers").then((result) => { if (!canceled) setProviders(result); }).catch((failure) => { if (!canceled) setProviderError(errorMessage(failure)); }).finally(() => { if (!canceled) setProviderLoading(false); });
+-    return () => { canceled = true; };
+-  }, [providerRevision]);
+   useEffect(() => {
+     if (!accountId) { setBindingLoading(false); return; }
+@@ -304,5 +297,5 @@ export function ProviderAccountImport({ accountId, savedBinding, initialBinding,
+   }
+   function refreshProviders() {
+-    setProviderLoading(true); setProviderRevision((value) => value + 1);
++    void loadProviders(true);
+     refreshKeys();
+   }
+diff --git a/web/src/Providers.tsx b/web/src/Providers.tsx
+index f2db9257e37cbace1325c4f4ea941d7ca1f20542..13e0c3c9871555e32dc17740f0d92f13124926db 100644
+--- a/web/src/Providers.tsx
++++ b/web/src/Providers.tsx
+@@ -1,5 +1,6 @@
+-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
++import { useEffect, useId, useMemo, useRef, useState } from "react";
+ import type { FormEvent, KeyboardEvent } from "react";
+ import { AlertCircle, ArrowUpRight, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, CreditCard, ExternalLink, Eye, EyeOff, KeyRound, LoaderCircle, Pencil, Plus, RefreshCw, Server, ShieldCheck, Trash2, Wallet } from "lucide-react";
++import { useResource, useResources } from "./resources";
+ import { api, errorMessage, time } from "./api";
+ import type { ProviderAuthRequirements } from "./api";
+@@ -167,5 +168,5 @@ function SecretInput({ value, onChange, placeholder, required = false, disabled
+ }
+ 
+-function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provider; onClose: () => void; onSaved: () => Promise<void>; notify: Notice }) {
++function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provider; onClose: () => void; onSaved: (provider: Provider) => void; notify: Notice }) {
+   const [values, setValues] = useState(() => defaults(provider));
+   const [busy, setBusy] = useState<"test" | "save" | null>(null);
+@@ -289,5 +290,4 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
+   async function submit(event: FormEvent<HTMLFormElement>) {
+     event.preventDefault(); setError(""); setBusy("save");
+-    let saved = false;
+     try {
+       validate();
+@@ -306,9 +306,8 @@ function ProviderForm({ provider, onClose, onSaved, notify }: { provider?: Provi
+       }
+       const result = await api<Provider>(provider ? `/providers/${provider.id}` : "/providers", provider ? "PUT" : "POST", payload(values));
+-      saved = true;
+-      try { await api<Provider>(`/providers/${result.id}/refresh`, "POST"); }
+-      catch (failure) { notify(`服务提供商已保存，同步暂未完成：${errorMessage(failure)}`, true); await onSaved(); onClose(); return; }
+-      await onSaved(); onClose(); notify(provider ? "服务提供商已更新" : "服务提供商登录成功，已添加");
+-    } catch (failure) { setError(saved ? `已保存，但列表更新失败：${errorMessage(failure)}` : errorMessage(failure)); }
++      onSaved(result);
++      onClose();
++      notify(provider ? "服务提供商已更新，正在同步用量" : "服务提供商已添加，正在同步用量");
++    } catch (failure) { setError(errorMessage(failure)); }
+     finally { if (turnstileRequired && turnstileToken) resetChallenge(); setBusy(null); }
+   }
+@@ -359,10 +358,10 @@ function ProviderCard({ provider, busy, onRefresh, onEdit, onDelete }: { provide
+ }
+ 
+-function ProviderDelete({ provider, onClose, onDeleted, notify }: { provider: Provider; onClose: () => void; onDeleted: () => Promise<void>; notify: Notice }) {
++function ProviderDelete({ provider, onClose, onDeleted, notify }: { provider: Provider; onClose: () => void; onDeleted: () => void; notify: Notice }) {
+   const [busy, setBusy] = useState(false);
+   const [error, setError] = useState("");
+   async function remove() {
+     setBusy(true); setError("");
+-    try { await api(`/providers/${provider.id}`, "DELETE"); await onDeleted(); onClose(); notify("服务提供商已删除"); }
++    try { await api(`/providers/${provider.id}`, "DELETE"); onDeleted(); onClose(); notify("服务提供商已删除"); }
+     catch (failure) { setError(errorMessage(failure)); }
+     finally { setBusy(false); }
+@@ -371,8 +370,8 @@ function ProviderDelete({ provider, onClose, onDeleted, notify }: { provider: Pr
+ }
+ 
+-export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revision?: number; notify: Notice; onLoadingChange?: (loading: boolean) => void }) {
+-  const [providers, setProviders] = useState<Provider[]>([]);
+-  const [loading, setLoading] = useState(true);
+-  const [error, setError] = useState("");
++export function ProvidersPage({ notify }: { notify: Notice }) {
++  const cache = useResources();
++  const { data, loading, error, load } = useResource<Provider[]>("/providers");
++  const providers = data ?? [];
+   const [search, setSearch] = useState("");
+   const [filter, setFilter] = useState("all");
+@@ -381,14 +380,15 @@ export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revis
+   const [refreshing, setRefreshing] = useState<string[]>([]);
+   const [refreshingAll, setRefreshingAll] = useState(false);
+-  const requestId = useRef(0);
+-  const reload = useCallback(async () => {
+-    const request = ++requestId.current;
+-    setLoading(true); setError("");
+-    try { const result = await api<Provider[]>("/providers"); if (request === requestId.current) setProviders(result); }
+-    catch (failure) { if (request === requestId.current) setError(errorMessage(failure)); }
+-    finally { if (request === requestId.current) setLoading(false); }
+-  }, []);
+-  useEffect(() => { void reload(); return () => { requestId.current += 1; }; }, [revision, reload]);
+-  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
++  const reload = () => load(true);
++  const changed = () => cache.invalidate("/providers", "/accounts", "/keys", "/playground/models");
++  function saveProvider(saved: Provider) {
++    const list = cache.get<Provider[]>("/providers");
++    const current = list.getSnapshot().data;
++    if (current) list.set(current.some((p) => p.id === saved.id) ? current.map((p) => p.id === saved.id ? saved : p) : [...current, saved]);
++    else void list.load(true);
++    cache.invalidate("/accounts", "/keys", "/playground/models");
++    // Successful persistence and external usage sync have separate feedback.
++    void refreshOne(saved);
++  }
+   const filtered = useMemo(() => providers.filter((provider) => (filter === "all" || provider.kind === filter) && `${provider.name} ${provider.base_url} ${provider.username} ${provider.notes} ${labels[provider.kind]}`.toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))), [providers, search, filter]);
+   const refreshable = providers.filter((provider) => !provider.readonly && (!provider.official || hasCredentials(provider)));
+@@ -397,13 +397,29 @@ export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revis
+   async function refresh(provider: Provider, silent = false) {
+     setRefreshing((current) => [...current, provider.id]);
+-    try { const result = await api<Provider>(`/providers/${provider.id}/refresh`, "POST"); setProviders((current) => current.map((item) => item.id === provider.id ? result : item)); if (!silent) notify(`${provider.name} 已同步`); return true; }
+-    catch (failure) { if (!silent) notify(`${provider.name} 同步失败：${errorMessage(failure)}`, true); return false; }
++    try {
++      const result = await api<Provider>(`/providers/${provider.id}/refresh`, "POST", undefined, cache.signal);
++      const entry = cache.get<Provider[]>("/providers");
++      const current = entry.getSnapshot().data;
++      if (current) entry.set(current.map((item) => item.id === provider.id ? result : item));
++      if (!silent) notify(`${provider.name} 已同步`);
++      return true;
++    } catch (failure) {
++      if (!silent && !cache.signal.aborted) notify(`${provider.name} 同步失败：${errorMessage(failure)}`, true);
++      return false;
++    }
+     finally { setRefreshing((current) => current.filter((id) => id !== provider.id)); }
+   }
+-  async function refreshOne(provider: Provider) { const ok = await refresh(provider); if (!ok) await reload(); }
++  async function refreshOne(provider: Provider) { const ok = await refresh(provider); if (!ok && !cache.signal.aborted) await reload(); }
+   async function refreshAll() {
+     setRefreshingAll(true);
+     let success = 0;
+-    try { for (const provider of refreshable) if (await refresh(provider, true)) success += 1; await reload(); notify(success === refreshable.length ? "已配置的服务提供商已同步" : `已同步 ${success} / ${refreshable.length} 个服务提供商，失败站点保留上次数据`, success !== refreshable.length); }
++    try {
++      // Bound external I/O; one slow site should not hold up all the others.
++      let next = 0;
++      const worker = async () => { while (!cache.signal.aborted && next < refreshable.length) if (await refresh(refreshable[next++], true)) success++; };
++      await Promise.all(Array.from({ length: Math.min(3, refreshable.length) }, worker));
++      if (cache.signal.aborted) return;
++      await reload();
++      notify(success === refreshable.length ? "已配置的服务提供商已同步" : `已同步 ${success} / ${refreshable.length} 个服务提供商，失败站点保留上次数据`, success !== refreshable.length); }
+     finally { setRefreshingAll(false); }
+   }
+@@ -413,8 +429,8 @@ export function ProvidersPage({ revision = 0, notify, onLoadingChange }: { revis
+     <div className="provider-list-toolbar"><SearchInput value={search} onChange={setSearch} placeholder="搜索站点名称、地址或备注…" /><div className="provider-toolbar-options"><ProviderPlatformFilter value={filter} onChange={setFilter} /><Button onClick={() => void refreshAll()} busy={refreshingAll} disabled={loading || refreshable.length === 0 || refreshing.length > 0}>{!refreshingAll && <RefreshCw size={15} />}全部刷新</Button></div></div>
+     {error && <div className="provider-load-error"><ErrorBox message={error} /><Button className="small-button" onClick={() => void reload()} busy={loading}>重新加载</Button></div>}
+-    {loading && providers.length === 0 ? <div className="provider-loading" role="status"><LoaderCircle size={22} className="spin" /><span>正在加载服务提供商…</span></div> : filtered.length ? <div className="provider-list" aria-busy={loading || refreshingAll}>{filtered.map((provider) => <ProviderCard key={provider.id} provider={provider} busy={refreshing.includes(provider.id)} onRefresh={() => void refreshOne(provider)} onEdit={() => setEditing(provider)} onDelete={() => setDeleting(provider)} />)}</div> : !error && <section className="data-section provider-empty"><Empty title={search || filter !== "all" ? "没有匹配的服务提供商" : "连接你的第一个服务提供商"} detail={search || filter !== "all" ? "试试其他关键词，或切换到全部平台。" : "支持 Sub2API 和 New API，登录后即可集中查看余额与消费。"} action={search || filter !== "all" ? <Button onClick={() => { setSearch(""); setFilter("all"); }}>清除筛选</Button> : <Button className="primary" onClick={() => setEditing("new")}><Plus size={16} />添加服务提供商</Button>} /></section>}
++    {loading && !data ? <div className="provider-loading" role="status"><LoaderCircle size={22} className="spin" /><span>正在加载服务提供商…</span></div> : filtered.length ? <div className="provider-list" aria-busy={loading || refreshingAll}>{filtered.map((provider) => <ProviderCard key={provider.id} provider={provider} busy={refreshing.includes(provider.id)} onRefresh={() => void refreshOne(provider)} onEdit={() => setEditing(provider)} onDelete={() => setDeleting(provider)} />)}</div> : !error && <section className="data-section provider-empty"><Empty title={search || filter !== "all" ? "没有匹配的服务提供商" : "连接你的第一个服务提供商"} detail={search || filter !== "all" ? "试试其他关键词，或切换到全部平台。" : "支持 Sub2API 和 New API，登录后即可集中查看余额与消费。"} action={search || filter !== "all" ? <Button onClick={() => { setSearch(""); setFilter("all"); }}>清除筛选</Button> : <Button className="primary" onClick={() => setEditing("new")}><Plus size={16} />添加服务提供商</Button>} /></section>}
+     {providers.length > 0 && <div className="provider-list-caption"><span>共 {providers.length} 个服务提供商{filtered.length !== providers.length ? ` · 显示 ${filtered.length} 个` : ""}</span><span>金额按各站点充值倍率换算</span></div>}
+-    {editing && <ProviderForm provider={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={reload} notify={notify} />}
+-    {deleting && <ProviderDelete provider={deleting} onClose={() => setDeleting(null)} onDeleted={reload} notify={notify} />}
++    {editing && <ProviderForm provider={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={saveProvider} notify={notify} />}
++    {deleting && <ProviderDelete provider={deleting} onClose={() => setDeleting(null)} onDeleted={changed} notify={notify} />}
+   </>;
+ }
+diff --git a/web/src/RequestLogs.tsx b/web/src/RequestLogs.tsx
+index 4f17840409f719ba7df4cc2326eeaed7cdbf9ddf..a1759f350ccaf19eddcf5f885a41145a33b49f99 100644
+--- a/web/src/RequestLogs.tsx
++++ b/web/src/RequestLogs.tsx
+@@ -10,6 +10,7 @@ import {
+   Trash2,
+ } from "lucide-react";
++import { useResource, useResources } from "./resources";
+ import { api, errorMessage, number, tokenCount } from "./api";
+-import type { RequestLog, RequestLogExport, RequestLogPage, State } from "./api";
++import type { RequestLog, RequestLogExport, RequestLogPage } from "./api";
+ import { Badge, Button, Confirm, Empty, ErrorBox } from "./components";
+ import type { Notice } from "./components";
+@@ -52,4 +53,20 @@ function Metric({
+ }
+ 
++// Large installations can have thousands of pages. A direct jump stays constant-size.
++function LogPageJump({ page, totalPages, disabled, onChange }: {
++  page: number; totalPages: number; disabled: boolean; onChange: (page: number) => void;
++}) {
++  const [value, setValue] = useState(String(page));
++  return <form className="log-page-jump" onSubmit={(e) => {
++    e.preventDefault();
++    const next = Number(value);
++    if (Number.isInteger(next) && next >= 1 && next <= totalPages) onChange(next);
++  }}>
++    <input aria-label="跳转到页码" type="number" min={1} max={totalPages} required disabled={disabled}
++      value={value} onChange={(e) => setValue(e.target.value)} />
++    <Button type="submit" disabled={disabled}>跳转</Button>
++  </form>;
++}
++
+ function LogPageSelect({
+   page,
+@@ -165,5 +182,6 @@ function LogPageSelect({
+       const text = (now - search.current.time < 700 ? search.current.text : "") + event.key;
+       search.current = { text, time: now };
+-      const index = Array.from({ length: totalPages }, (_, pageIndex) => String(pageIndex + 1)).findIndex((value) => value.startsWith(text));
++      const value = Number(text);
++      const index = Number.isInteger(value) && value >= 1 && value <= totalPages && String(value) === text ? value - 1 : -1;
+       if (index >= 0) {
+         event.preventDefault();
+@@ -206,5 +224,5 @@ function LogPageSelect({
+           <span>选择页码</span><span>{totalPages} 页</span>
+         </div>
+-        {Array.from({ length: totalPages }, (_, index) => (
++        {open && Array.from({ length: totalPages }, (_, index) => (
+           <div
+             id={`${id}-option-${index}`}
+@@ -227,5 +245,5 @@ function LogPageSelect({
+ }
+ 
+-function LogRow({ row, state }: { row: RequestLog; state: State }) {
++function LogRow({ row }: { row: RequestLog }) {
+   const succeeded = row.status >= 200 && row.status < 300;
+   const redirected = row.status >= 300 && row.status < 400;
+@@ -234,9 +252,7 @@ function LogRow({ row, state }: { row: RequestLog; state: State }) {
+   const account =
+     row.account_name ||
+-    state.accounts.find((item) => item.id === row.account_id)?.name ||
+     "未匹配账号";
+   const key =
+     row.key_name ||
+-    state.keys.find((item) => item.id === row.key_id)?.name ||
+     "未匹配密钥";
+   const cached = row.usage.cache_read_input_tokens ?? row.usage.cached_tokens;
+@@ -320,50 +336,18 @@ function LogRow({ row, state }: { row: RequestLog; state: State }) {
+ }
+ 
+-export function RequestLogs({
+-  revision,
+-  notify,
+-  state,
+-  onLoadingChange,
+-}: {
+-  revision: number;
+-  notify: Notice;
+-  state: State;
+-  onLoadingChange?: (loading: boolean) => void;
+-}) {
++export function RequestLogs({ notify }: { notify: Notice }) {
++  const cache = useResources();
+   const [page, setPage] = useState(1);
+-  const [data, setData] = useState<RequestLogPage | null>(null);
+-  const [loading, setLoading] = useState(true);
+-  const [error, setError] = useState("");
+-  const [refresh, setRefresh] = useState(0);
++  const { data, error, loading, load } = useResource<RequestLogPage>(`/logs?page=${page}`);
+   const [exporting, setExporting] = useState(false);
+   const [confirmDelete, setConfirmDelete] = useState(false);
+   const [deleting, setDeleting] = useState(false);
+   const [deleteError, setDeleteError] = useState("");
+-  const requestSequence = useRef(0);
+-  useEffect(() => { onLoadingChange?.(loading); }, [loading, onLoadingChange]);
+   useEffect(() => {
+-    const sequence = ++requestSequence.current;
+-    setLoading(true);
+-    setError("");
+-    void api<RequestLogPage>(`/logs?page=${page}`)
+-      .then((result) => {
+-        if (sequence !== requestSequence.current) return;
+-        const lastPage = Math.max(1, result.total_pages);
+-        if (page > lastPage || result.page !== page) {
+-          setPage(Math.min(lastPage, Math.max(1, result.page)));
+-          return;
+-        }
+-        setData(result);
+-      })
+-      .catch((failure) => {
+-        if (sequence === requestSequence.current) setError(errorMessage(failure));
+-      })
+-      .finally(() => {
+-        if (sequence === requestSequence.current) setLoading(false);
+-      });
+-    return () => {
+-      requestSequence.current++;
+-    };
+-  }, [page, revision, refresh]);
++    if (data && data.page !== page) {
++      cache.get<RequestLogPage>(`/logs?page=${data.page}`).set(data);
++      setPage(data.page);
++    }
++  }, [cache, data, page]);
+ 
+   async function exportLogs() {
+@@ -392,9 +376,9 @@ export function RequestLogs({
+     setDeleting(true);
+     setDeleteError("");
+-    requestSequence.current++;
+     try {
+       const result = await api<{ deleted: number }>("/logs", "DELETE");
+       setConfirmDelete(false);
+-      setData(null);
++      cache.invalidate("/logs", "/keys", "/stats");
++      cache.get<RequestLogPage>("/logs?page=1").set({ items: [], page: 1, page_size: 20, total: 0, total_pages: 1, retention_days: data?.retention_days ?? 7 });
+       setPage(1);
+       notify(`已删除 ${number(result.deleted)} 条调用日志`);
+@@ -403,5 +387,4 @@ export function RequestLogs({
+     } finally {
+       setDeleting(false);
+-      setRefresh((value) => value + 1);
+     }
+   }
+@@ -411,5 +394,5 @@ export function RequestLogs({
+   const currentData = data?.page === page ? data : null;
+   const total = data?.total ?? 0;
+-  const busy = loading || deleting;
++  const busy = (!data && loading) || deleting;
+   return (
+     <>
+@@ -421,5 +404,5 @@ export function RequestLogs({
+         </div>
+         <div className="log-page-actions">
+-          <Button onClick={() => setRefresh((value) => value + 1)} disabled={busy}>
++          <Button onClick={() => void load(true)} disabled={loading || deleting}>
+             <RefreshCw size={15} className={loading ? "spin" : ""} />刷新
+           </Button>
+@@ -441,11 +424,11 @@ export function RequestLogs({
+           <span>每页 20 条 · 按时间倒序 · 点击记录展开详情</span>
+         </div>
+-        {loading ? (
++        {!currentData && loading ? (
+           <Empty title="正在加载调用日志" />
+-        ) : error ? (
+-          <Empty title="调用日志加载失败" action={<Button onClick={() => setRefresh((value) => value + 1)}>重新加载</Button>} />
++        ) : !currentData && error ? (
++          <Empty title="调用日志加载失败" action={<Button onClick={() => void load(true)}>重新加载</Button>} />
+         ) : currentData?.items.length ? (
+           <ol className="request-log-list">
+-            {currentData.items.map((row) => <LogRow key={row.id} row={row} state={state} />)}
++            {currentData.items.map((row) => <LogRow key={row.id} row={row} />)}
+           </ol>
+         ) : (
+@@ -462,4 +445,5 @@ export function RequestLogs({
+               <ChevronLeft size={15} />上一页
+             </Button>
++            {totalPages > 100 ? <LogPageJump key={page} page={page} totalPages={totalPages} disabled={busy} onChange={setPage} /> : (
+             <LogPageSelect
+               page={Math.min(page, totalPages)}
+@@ -468,4 +452,5 @@ export function RequestLogs({
+               onChange={setPage}
+             />
++            )}
+             <Button disabled={busy || !!error || page >= totalPages} onClick={() => setPage((value) => value + 1)}>
+               下一页<ChevronRight size={15} />
+diff --git a/web/src/Settings.tsx b/web/src/Settings.tsx
+index d9b37f8011c442c69c5d2a1108722b24e3cc2d96..ac9cacb07775cd02fc37c86044dc631e5af01d7b 100644
+--- a/web/src/Settings.tsx
++++ b/web/src/Settings.tsx
+@@ -22,18 +22,20 @@ import {
+   Toggle,
+ } from "./components";
+-import type { PageProps } from "./Management";
++import type { Notice } from "./components";
++import { useResource, useResources, ResourceStatus } from "./resources";
+ import { SystemUpdates } from "./SystemUpdates";
+ import type { UpdateCheck } from "./useUpdateCheck";
+ 
+-export function SettingsPage({
+-  state,
+-  reload,
+-  notify,
+-  updateCheck,
+-  updateFocusRequest,
+-}: PageProps & { updateCheck: UpdateCheck; updateFocusRequest: number }) {
+-  const [form, setForm] = useState<Settings>(state.settings);
++type SettingsProps = { username: string; notify: Notice; updateCheck: UpdateCheck; updateFocusRequest: number };
++export function SettingsPage(props: SettingsProps) {
++  const query = useResource<Settings>("/settings");
++  return <><ResourceStatus label="系统设置" queries={[query]} />{query.data && <SettingsForm {...props} settings={query.data} />}</>;
++}
++function SettingsForm({ settings, username, notify, updateCheck, updateFocusRequest }: SettingsProps & { settings: Settings }) {
++  const cache = useResources();
++  const [form, setForm] = useState<Settings>(settings);
++  const [previousSettings, setPreviousSettings] = useState(settings);
+   const [securityEnabled, setSecurityEnabled] = useState(
+-    !!state.settings.security_path,
++    !!settings.security_path,
+   );
+   const [turnstileSecret, setTurnstileSecret] = useState("");
+@@ -55,6 +57,14 @@ export function SettingsPage({
+         : "",
+       turnstile_secret_key: turnstileClear ? "" : turnstileSecret || undefined,
+-    }) !== JSON.stringify(state.settings);
+-  const entry = `${window.location.origin}/${state.settings.security_path || ""}`;
++    }) !== JSON.stringify(settings);
++  // Revalidation may finish after typing starts. Update only a pristine draft.
++  if (previousSettings !== settings) {
++    setPreviousSettings(settings);
++    if (form === previousSettings && securityEnabled === !!previousSettings.security_path) {
++      setForm(settings);
++      setSecurityEnabled(!!settings.security_path);
++    }
++  }
++  const entry = `${window.location.origin}/${settings.security_path || ""}`;
+   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
+     setForm((previous) => ({ ...previous, [key]: value }));
+@@ -80,5 +90,6 @@ export function SettingsPage({
+       });
+       window.history.replaceState(null, "", `/${securityPath}`);
+-      await reload();
++      cache.get<Settings>("/settings").set(saved);
++      if (saved.retention_days !== settings.retention_days) cache.invalidate("/logs", "/stats", "/keys");
+       setForm(saved);
+       setTurnstileSecret("");
+@@ -158,8 +169,8 @@ export function SettingsPage({
+               </div>
+               <Badge
+-                variant={state.settings.security_path ? "green" : "neutral"}
++                variant={settings.security_path ? "green" : "neutral"}
+                 dot
+               >
+-                {state.settings.security_path ? "已启用" : "未启用"}
++                {settings.security_path ? "已启用" : "未启用"}
+               </Badge>
+             </div>
+@@ -212,5 +223,5 @@ export function SettingsPage({
+                   <strong>Cloudflare Turnstile</strong>
+                   <small>
+-                    {state.settings.turnstile_enabled
++                    {settings.turnstile_enabled
+                       ? "Cloudflare Turnstile 已启用"
+                       : "登录时进行人机安全校验"}
+@@ -218,8 +229,8 @@ export function SettingsPage({
+                 </span>
+                 <Badge
+-                  variant={state.settings.turnstile_enabled ? "green" : "neutral"}
++                  variant={settings.turnstile_enabled ? "green" : "neutral"}
+                   dot
+                 >
+-                  {state.settings.turnstile_enabled
++                  {settings.turnstile_enabled
+                     ? "Cloudflare Turnstile 已启用"
+                     : "Cloudflare Turnstile 未启用"}
+@@ -237,5 +248,5 @@ export function SettingsPage({
+                 label="Cloudflare Turnstile 密钥"
+                 hint={
+-                  state.settings.turnstile_enabled
++                  settings.turnstile_enabled
+                     ? "已保存密钥；输入新值可替换"
+                     : "保存后登录将强制进行安全校验"
+@@ -249,5 +260,5 @@ export function SettingsPage({
+                     setTurnstileClear(false);
+                   }}
+-                  placeholder={state.settings.turnstile_enabled ? "已配置" : "输入 Secret Key"}
++                  placeholder={settings.turnstile_enabled ? "已配置" : "输入 Secret Key"}
+                   maxLength={512}
+                 />
+@@ -258,5 +269,5 @@ export function SettingsPage({
+                   测试连接
+                 </Button>
+-                {state.settings.turnstile_enabled && (
++                {settings.turnstile_enabled && (
+                   <Button
+                     type="button"
+@@ -405,5 +416,5 @@ export function SettingsPage({
+           </span>
+           <span className="eyebrow">ADMINISTRATOR</span>
+-          <strong>{state.username}</strong>
++          <strong>{username}</strong>
+           <div>
+             <span className="status-dot" />
+diff --git a/web/src/api.ts b/web/src/api.ts
+index 3b4a3c928886bd6d8fd8f9254818bae590af926c..53c814dea3dd1c93ce5b55e753daac5949432b98 100644
+--- a/web/src/api.ts
++++ b/web/src/api.ts
+@@ -11,7 +11,9 @@ export async function api<T = unknown>(
+   method = "GET",
+   body?: unknown,
++  signal?: AbortSignal,
+ ): Promise<T> {
+   const response = await fetch(`/api${path}`, {
+     method,
++    signal,
+     credentials: "same-origin",
+     headers: {
+@@ -38,5 +40,5 @@ export async function api<T = unknown>(
+         : failure.error?.message;
+     if (
+-      response.status === 401 &&
++      response.status === 401 && !signal?.aborted &&
+       !["/login", "/setup", "/bootstrap"].includes(path)
+     )
+@@ -215,5 +217,4 @@ export type Profile = {
+   model_family: string;
+   models: string[];
+-  instruction: string;
+   metadata?: {
+     source_url: string;
+@@ -230,12 +231,5 @@ export type ProfileTemplate = {
+   validation: string;
+ };
+-export type State = {
+-  groups: Group[];
+-  accounts: Account[];
+-  keys: RelayKey[];
+-  settings: Settings;
+-  profiles: Profile[];
+-  username: string;
+-};
++export type KeyInfo = Omit<RelayKey, "usage">;
+ export type Summary = Usage & {
+   uncached_tokens: number;
+@@ -297,11 +291,9 @@ export const emptyStats: Stats = {
+   keys: 0,
+ };
+-export const number = (value = 0) =>
+-  new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+-export const compact = (value = 0) =>
+-  new Intl.NumberFormat("en-US", {
+-    notation: "compact",
+-    maximumFractionDigits: 2,
+-  }).format(value);
++const integers = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
++const abbreviated = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
++const timestamps = new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
++export const number = (value = 0) => integers.format(value);
++export const compact = (value = 0) => abbreviated.format(value);
+ export const compactCount = (value = 0) => {
+   const magnitude = Math.abs(value);
+@@ -322,11 +314,5 @@ export const tokenCount = (value = 0) => {
+ export const percent = (value = 0) => `${value.toFixed(1)}%`;
+ export const time = (value: number) =>
+-  new Date(value * 1000).toLocaleString("zh-CN", {
+-    month: "2-digit",
+-    day: "2-digit",
+-    hour: "2-digit",
+-    minute: "2-digit",
+-    hour12: false,
+-  });
++  timestamps.format(value * 1000);
+ export const day = (date: Date) =>
+   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+diff --git a/web/src/resourceCache.ts b/web/src/resourceCache.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..4ecac71aa94a7b448b899cde07b0c5d73977cbc7
+--- /dev/null
++++ b/web/src/resourceCache.ts
+@@ -0,0 +1,93 @@
++// Only idempotent console reads belong here. Each login owns a new, memory-only cache.
++type Loader = (path: string, signal: AbortSignal) => Promise<unknown>;
++type Snapshot<T> = { data?: T; loading: boolean; error: string };
++
++export class Resource<T> {
++  private snapshot: Snapshot<T> = { loading: true, error: "" };
++  private listeners = new Set<() => void>();
++  private updated = 0;
++  private pending?: { controller: AbortController; promise: Promise<void> };
++  private fetchData: (signal: AbortSignal) => Promise<unknown>;
++  constructor(fetchData: (signal: AbortSignal) => Promise<unknown>) { this.fetchData = fetchData; }
++
++  getSnapshot = () => this.snapshot;
++  get active() { return this.listeners.size > 0; }
++  subscribe = (listener: () => void) => {
++    this.listeners.add(listener);
++    void this.load();
++    return () => { this.listeners.delete(listener); };
++  };
++  private publish(snapshot: Snapshot<T>) {
++    this.snapshot = snapshot;
++    this.listeners.forEach((listener) => listener());
++  }
++  load = (force = false): Promise<void> => {
++    if (this.pending) return this.pending.promise;
++    if (!force && this.updated && Date.now() - this.updated < 30_000) return Promise.resolve();
++    const controller = new AbortController();
++    const promise = this.fetchData(controller.signal).then((data) => {
++      if (controller.signal.aborted) return;
++      this.updated = Date.now();
++      this.publish({ data: data as T, loading: false, error: "" });
++    }, (failure) => {
++      if (controller.signal.aborted) return;
++      this.updated = 0;
++      this.publish({ ...this.snapshot, loading: false, error: failure instanceof Error ? failure.message : "加载失败" });
++    }).finally(() => {
++      if (this.pending?.controller === controller) this.pending = undefined;
++    });
++    this.pending = { controller, promise };
++    this.publish({ ...this.snapshot, loading: true, error: "" });
++    return promise;
++  };
++  invalidate() {
++    this.updated = 0;
++    this.pending?.controller.abort();
++    this.pending = undefined;
++  }
++  set(data: T) {
++    this.invalidate();
++    this.updated = Date.now();
++    this.publish({ data, loading: false, error: "" });
++  }
++}
++
++export class ResourceCache {
++  private entries = new Map<string, Resource<unknown>>();
++  private lifetime = new AbortController();
++  get signal() { return this.lifetime.signal; }
++  private fetchData: Loader;
++  constructor(fetchData: Loader) { this.fetchData = fetchData; }
++  get<T>(path: string): Resource<T> {
++    let entry = this.entries.get(path);
++    if (!entry) {
++      // Bound dated queries and log pages without evicting subscribed views.
++      if (this.entries.size >= 48) {
++        for (const [key, candidate] of this.entries) {
++          if (!candidate.active) { candidate.invalidate(); this.entries.delete(key); break; }
++        }
++      }
++      entry = new Resource((signal) => this.signal.aborted
++        ? Promise.reject(new Error("登录会话已结束")) : this.fetchData(path, signal));
++    }
++    this.entries.delete(path);
++    this.entries.set(path, entry);
++    return entry as Resource<T>;
++  }
++  // Invalidate all query variants; only mounted consumers issue a new request.
++  invalidate(...paths: string[]) {
++    for (const [path, entry] of this.entries) {
++      if (!paths.includes(path.split("?")[0])) continue;
++      entry.invalidate();
++      if (entry.active) void entry.load();
++    }
++  }
++  async refreshActive() {
++    await Promise.all([...this.entries.values()].filter((entry) => entry.active).map((entry) => entry.load(true)));
++  }
++  dispose() {
++    this.lifetime.abort();
++    this.entries.forEach((entry) => entry.invalidate());
++    this.entries.clear();
++  }
++}
+diff --git a/web/src/resources.tsx b/web/src/resources.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..51649c6e0e2f25c4baed55eb2be17ac2f5ba12af
+--- /dev/null
++++ b/web/src/resources.tsx
+@@ -0,0 +1,35 @@
++import { createContext, useContext, useMemo, useSyncExternalStore } from "react";
++import { LoaderCircle, RefreshCw } from "lucide-react";
++import { Button, ErrorBox } from "./components";
++import { ResourceCache } from "./resourceCache";
++
++export const Resources = createContext<ResourceCache | null>(null);
++export const keyListPath = "/keys?usage=false";
++export function useResources() {
++  const cache = useContext(Resources);
++  if (!cache) throw new Error("需要登录工作空间");
++  return cache;
++}
++const idle = { data: undefined, loading: false, error: "" };
++const idleSnapshot = () => idle;
++const unsubscribe = () => {};
++const idleSubscribe = () => unsubscribe;
++const idleLoad = () => Promise.resolve();
++export function useResource<T>(path: string | null) {
++  const cache = useResources();
++  const entry = useMemo(() => path ? cache.get<T>(path) : undefined, [cache, path]);
++  const snapshot = useSyncExternalStore(entry?.subscribe ?? idleSubscribe, entry?.getSnapshot ?? idleSnapshot);
++  return { ...snapshot, load: entry?.load ?? idleLoad };
++}
++export function Loading({ label }: { label: string }) {
++  return <div className="resource-status" role="status"><LoaderCircle className="spin" size={18} />正在加载{label}…</div>;
++}
++export function ResourceStatus({ queries, label }: {
++  queries: { data?: unknown; error: string; load: (force: boolean) => Promise<void> }[];
++  label: string;
++}) {
++  const failed = queries.filter((q) => q.error);
++  if (failed.length) return <div className="page-load-error" role="alert"><ErrorBox message={`${label}加载失败：${failed[0].error}`} />
++    <Button className="small-button" onClick={() => failed.forEach((q) => void q.load(true))}><RefreshCw size={15} />重试</Button></div>;
++  return queries.some((q) => q.data === undefined) ? <Loading label={label} /> : null;
++}
+diff --git a/web/src/style.css b/web/src/style.css
+index 80588507b4fa99e9fae7190101c208c03c51a482..0782475904bb558684c4a732d9a7fd4c6ac080de 100644
+--- a/web/src/style.css
++++ b/web/src/style.css
+@@ -363,13 +363,7 @@ input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: p
+ .main-content { position: relative; padding: 30px 36px 40px 20px; width: 100%; max-width: 1720px; margin: 0 auto; flex: 1; }
+ .page-content { min-height: 360px; }
+-.page-content[hidden] { display: none; }
+-.page-loading-state { display: grid; place-items: center; width: 100%; min-height: clamp(360px, 62vh, 620px); border: 1.5px solid #fff; border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow); animation: page-loading-in 150ms var(--ease-out); }
+-.page-loading-card { display: flex; flex-direction: column; align-items: center; gap: 16px; width: min(100%, 480px); padding: clamp(36px, 6vw, 72px) 24px; text-align: center; }
+-.page-loading-symbol { display: grid; place-items: center; width: 88px; height: 88px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 28px; background: var(--soft-candy); color: var(--pink-600); }
+-.page-loading-card > strong { font-size: clamp(20px, 2vw, 24px); font-weight: 800; color: var(--ink); line-height: 1.4; }
+-.page-loading-card > span:last-child { max-width: 32ch; font-size: 14px; line-height: 1.7; color: var(--muted); }
++.resource-status { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 84px; color: var(--muted); font-size: 14px; }
+ .page-load-error { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 18px; }
+ .page-load-error > .error-box { flex: 1; min-width: min(100%, 240px); }
+-@keyframes page-loading-in { from { opacity: 0; } to { opacity: 1; } }
+ .workspace-footer {
+   display: flex;
+@@ -691,4 +685,5 @@ td strong { font-weight: 700; color: var(--ink); }
+ .action-cell { width: 92px; text-align: right; }
+ .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
++.table-pages { display: flex; align-items: center; gap: 8px; }
+ .table-footer {
+   display: flex;
+@@ -1222,4 +1217,6 @@ td strong { font-weight: 700; color: var(--ink); }
+ .log-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 14px 20px; border-top: 1.5px dashed var(--line); background: var(--soft-gradient); }
+ .log-pagination-count { color: var(--muted); font-size: 12px; font-weight: 700; }
++.log-page-jump { display: flex; align-items: center; gap: 4px; }
++.log-page-jump input { width: 6em; }
+ .log-pagination-controls { display: flex; align-items: center; gap: 8px; }
+ .log-pagination-controls .button { height: 38px; padding: 0 14px; font-size: 12px; }
+@@ -1559,5 +1556,4 @@ td strong { font-weight: 700; color: var(--ink); }
+ }
+ @media (prefers-reduced-motion: reduce) {
+-  .page-loading-spinner { animation: none !important; }
+   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+ }
+diff --git a/web/tests/dist.mjs b/web/tests/dist.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..44edaa5aedf0c1da137ded51f543cc509d621d57
+--- /dev/null
++++ b/web/tests/dist.mjs
+@@ -0,0 +1,25 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { readFile, readdir } from "node:fs/promises";
++import { gunzipSync } from "node:zlib";
++
++const dist = new URL("../dist/", import.meta.url);
++
++test("gzip and identity serve exactly the same final JS and CSS", async () => {
++  const assets = new URL("assets/", dist);
++  const names = await readdir(assets);
++  for (const name of names.filter((name) => /\.(js|css)$/.test(name))) {
++    const source = await readFile(new URL(name, assets));
++    if (source.length < 1024) continue;
++    const gz = await readFile(new URL(`${name}.gz`, assets));
++    assert.ok(gunzipSync(gz).equals(source), `${name}: compressed bytes are not the shipped bundle`);
++  }
++});
++
++test("the entry HTML keeps page-only code outside the cold-start JS budget", async () => {
++  const html = await readFile(new URL("index.html", dist), "utf8");
++  const entryScripts = [...html.matchAll(/(?:src|href)="\/([^"?]+\.js)"/g)].map((match) => match[1]);
++  assert.ok(entryScripts.length > 0);
++  const files = await Promise.all(entryScripts.map((name) => readFile(new URL(name, dist))));
++  assert.ok(files.reduce((bytes, file) => bytes + file.length, 0) < 400_000, "initial JavaScript exceeds 400 kB uncompressed");
++});
+diff --git a/web/tests/resourceCache.test.mjs b/web/tests/resourceCache.test.mjs
+new file mode 100644
+index 0000000000000000000000000000000000000000..55f3802182244b640c178f7f80a0f64101f2a41c
+--- /dev/null
++++ b/web/tests/resourceCache.test.mjs
+@@ -0,0 +1,73 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { ResourceCache } from "../src/resourceCache.ts";
++
++function fixture() {
++  const calls = [];
++  const cache = new ResourceCache((path, signal) => new Promise((resolve, reject) => {
++    calls.push({ path, signal, resolve, reject });
++  }));
++  return { cache, calls };
++}
++
++test("preloading, mounting twice, and navigating back share the same read", async () => {
++  const { cache, calls } = fixture();
++  const groups = cache.get("/groups");
++  const preload = groups.load();
++  groups.subscribe(() => {})();
++  const unsubscribe = groups.subscribe(() => {});
++  assert.equal(groups.load(true), preload);
++  calls[0].resolve(["a"]);
++  await preload;
++  unsubscribe();
++  cache.get("/groups").subscribe(() => {})();
++  assert.equal(calls.length, 1);
++  assert.deepEqual(groups.getSnapshot().data, ["a"]);
++});
++
++test("invalidate refreshes mounted variants only and discards late responses", async () => {
++  const { cache, calls } = fixture();
++  const stats = cache.get("/stats?from=1");
++  stats.set("previous");
++  stats.subscribe(() => {});
++  const other = cache.get("/stats?from=2");
++  other.set("other range");
++  const first = stats.load(true);
++  cache.invalidate("/stats");
++  assert.equal(calls[0].signal.aborted, true);
++  assert.deepEqual(calls.map(c => c.path), ["/stats?from=1", "/stats?from=1"]);
++  assert.equal(stats.getSnapshot().data, "previous");
++  const refresh = stats.load();
++  calls[1].resolve("current"); calls[0].resolve("obsolete");
++  await Promise.all([first, refresh]);
++  assert.equal(stats.getSnapshot().data, "current");
++  const next = other.load(); calls[2].resolve("new range"); await next;
++  assert.equal(other.getSnapshot().data, "new range");
++});
++
++test("a failed background refresh retains the last good result and can be retried", async () => {
++  const { cache, calls } = fixture();
++  const logs = cache.get("/logs?page=1"); logs.set([1]);
++  logs.subscribe(() => {});
++  cache.get("/accounts").set([]);
++  const refresh = cache.refreshActive();
++  calls[0].reject(new Error("offline")); await refresh;
++  assert.deepEqual(logs.getSnapshot(), { data: [1], loading: false, error: "offline" });
++  const retry = logs.load(true); calls[1].resolve([2]); await retry;
++  assert.equal(logs.getSnapshot().error, "");
++  assert.equal(calls.length, 2);
++});
++
++test("a new session cannot consume a previous session's pending read", async () => {
++  const { cache, calls } = fixture();
++  const first = cache.get("/settings"); const old = first.load();
++  cache.dispose();
++  const next = fixture();
++  const second = next.cache.get("/settings"); const fresh = second.load();
++  assert.equal(calls[0].signal.aborted, true);
++  next.calls[0].resolve("new session"); calls[0].resolve("old session"); await Promise.all([old, fresh]);
++  assert.equal(first.getSnapshot().data, undefined);
++  assert.equal(second.getSnapshot().data, "new session");
++  await first.load(true);
++  assert.equal(calls.length, 1);
++});
+diff --git a/web/vite.config.ts b/web/vite.config.ts
+index d6879e91fe0e0d00e61256f0ee741e5f40bfcb12..193491ed9d1df683202134c10fe573af071110b0 100644
+--- a/web/vite.config.ts
++++ b/web/vite.config.ts
+@@ -1,2 +1,5 @@
++import { gzipSync } from "node:zlib";
++import { readFile, writeFile } from "node:fs/promises";
++import { resolve } from "node:path";
+ import { defineConfig } from "vite";
+ import react from "@vitejs/plugin-react";
+@@ -4,5 +7,19 @@ import { licenseNotices } from "./license-notices.mjs";
+ 
+ export default defineConfig({
+-  plugins: [react(), licenseNotices()],
++  plugins: [react(), licenseNotices(), {
++    name: "precompress-console-assets",
++    apply: "build",
++    enforce: "post",
++    // Vite rewrites import preloads late in generateBundle. Compress the final bytes,
++    // otherwise a gzip-capable browser can receive different JS from the plain file.
++    async writeBundle({ dir }, bundle) {
++      if (!dir) return;
++      await Promise.all(Object.keys(bundle).filter((name) => /\.(js|css)$/.test(name)).map(async (name) => {
++        const path = resolve(dir, name);
++        const source = await readFile(path);
++        if (source.length >= 1024) await writeFile(`${path}.gz`, gzipSync(source, { level: 9 }));
++      }));
++    },
++  }],
+   server: {
+     proxy: {
+@@ -14,5 +31,4 @@ export default defineConfig({
+     outDir: "dist",
+     sourcemap: false,
+-    rollupOptions: { output: { manualChunks: { charts: ["recharts"] } } },
+   },
+ });

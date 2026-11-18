@@ -1,0 +1,51 @@
+name: Console preview checks
+on:
+  push:
+    tags: ['v0.14.2-console.1']
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    name: Patch, frontend tests and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the release package
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check out only the base paths used by the patch and the frontend build
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 8d0dd6995192e183a0d75d81e16fd2f8e47a24c2
+          path: base
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /web/
+            /src/api.rs
+            /src/lib.rs
+            /src/store.rs
+            /tests/application.rs
+            /tests/request_logs.rs
+      - name: Verify and apply the source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep '  console-performance\.patch$' SHA256SUMS | sha256sum --check --strict -
+          test "$(git -C base rev-parse HEAD)" = 8d0dd6995192e183a0d75d81e16fd2f8e47a24c2
+          git -C base apply --check --whitespace=error-all "$PWD/console-performance.patch"
+          git -C base apply --whitespace=error-all "$PWD/console-performance.patch"
+          git -C base apply --reverse --check "$PWD/console-performance.patch"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Build and test the console
+        working-directory: base/web
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+          npm run test:build
