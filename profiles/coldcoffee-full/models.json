@@ -14,5 +14,61 @@
       "gpt-6.2-sol"
     ],
     "model_family": "gpt-6.2"
+  },
+  {
+    "id": "coldcoffee-glm-5.4-v1",
+    "name": "冷咖啡 · GLM 5.4全模型支持 · glm-5.4",
+    "models": [
+      "glm-5.4"
+    ],
+    "model_family": "glm"
+  },
+  {
+    "id": "coldcoffee-claude-fable-5.2-v1",
+    "name": "冷咖啡 · Claude Fable 5.2 / 全模型支持 · claude-fable-5.2",
+    "models": [
+      "claude-fable-5.2"
+    ],
+    "model_family": "claude"
+  },
+  {
+    "id": "coldcoffee-gemini-4-v1",
+    "name": "冷咖啡 · Gemini 4 全模型支持 · gemini-4",
+    "models": [
+      "gemini-4"
+    ],
+    "model_family": "gemini"
+  },
+  {
+    "id": "coldcoffee-gemini-4-carbon-v1",
+    "name": "冷咖啡 · Gemini 4 全模型支持 · gemini-4-carbon",
+    "models": [
+      "gemini-4-carbon"
+    ],
+    "model_family": "gemini"
+  },
+  {
+    "id": "coldcoffee-gemini-4-neon-v1",
+    "name": "冷咖啡 · Gemini 4 全模型支持 · gemini-4-neon",
+    "models": [
+      "gemini-4-neon"
+    ],
+    "model_family": "gemini"
+  },
+  {
+    "id": "coldcoffee-gemini-4-hydrogen-v1",
+    "name": "冷咖啡 · Gemini 4 全模型支持 · gemini-4-hydrogen",
+    "models": [
+      "gemini-4-hydrogen"
+    ],
+    "model_family": "gemini"
+  },
+  {
+    "id": "coldcoffee-gemini-4-argon-v1",
+    "name": "冷咖啡 · Gemini 4 全模型支持 · gemini-4-argon",
+    "models": [
+      "gemini-4-argon"
+    ],
+    "model_family": "gemini"
   }
 ]

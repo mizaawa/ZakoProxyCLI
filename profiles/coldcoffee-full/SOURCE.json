@@ -1,19 +1,19 @@
 {
   "repository": "https://github.com/3641397194-wq/gpt6-Astra",
-  "revision": "86997bffc0355930918c82311e2c34aa04d2b5b8",
+  "revision": "a30126e7c7d6c2ffe6b08f007cbc055d9b498f71",
   "license": "MIT",
   "copyright": "Copyright (c) 2026 3641397194-wq",
   "validation": "unverified",
   "adaptations": [
-    "Import all 11 seats and 4 local Agent workflows as inert API request text; execute no upstream code",
+    "Import all 11 seats and 5 local Agent workflows as inert API request text; execute no upstream code",
     "Inline the shared activation reply, workflows, router, normalizer and 80 leaves where requested by each seat",
     "Remove seat/variant installation frontmatter, installation paragraphs and target-file labels",
     "Replace installer-centric workflows for doubao, workbuddy, cursor, mimo and kimi with API delivery guidance",
     "Omit installer IDA/MCP and commercial unified-work blocks; preserve their upstream source for provenance",
-    "Add truthful API capability guidance; preserve the v0.13.4 GPT payload byte for byte",
-    "Read the current Codex display label from upstream shared workbench metadata without executing JavaScript",
-    "Add separate exact-model presets for gpt-6.2-astra and gpt-6.2-sol; keep the shared Codex payload unchanged",
-    "Treat all names as template labels, not API model IDs; caller must bind actual available models",
+    "Regenerate every active template from the pinned source with truthful API capability guidance",
+    "Read all current seat display labels from upstream metadata; align the stale raw Codex header with its current GPT-6.2 label",
+    "Retain GPT-6.2 exact presets; add GLM-5.4, Claude Fable 5.2 and Gemini 4 family exact presets from upstream relay recommendations",
+    "Display-only Kimi K3.1 Pro, MiniMax M3.1 Flash and Doubao 2.1 labels remain templates; callers bind actual provider model IDs",
     "Preserve all 42 historical active profiles in immutable legacy.json for exact-match configuration migration"
   ],
   "inputs": {
@@ -22,16 +22,16 @@
       "sha256": "d0a8ebb576056a520155115c7781197523b9ab355b21d42a08ea2fb1b868de2c"
     },
     "desktop/src/lib/local-agent-skills.js": {
-      "bytes": 4664,
-      "sha256": "d80d0e704111ab733c2294b3fa0cf6e29bce11e30bbf3adb3fae8da2f148e644"
+      "bytes": 5765,
+      "sha256": "f2b8b85c6e1473ed0acb7244f31cc5a13aa147dad792b7ae2958c8f17676ac7a"
     },
     "desktop/src/lib/packs/activation-reply.md": {
       "bytes": 1832,
       "sha256": "09ea8e92a255506fb9ae33f7f970ea1cef37a4f36e35f9aae729ef8cbaf9f784"
     },
     "desktop/src/lib/packs/claude.md": {
-      "bytes": 1924,
-      "sha256": "4ad8b08ef3f1dd78d5ac15a5859746d220dbd417d294f2dc68b7ec86c2d41109"
+      "bytes": 1940,
+      "sha256": "1038999f7efbe8eef17812d89b1c7fe8a0db60506788da18cfe94fa67607565b"
     },
     "desktop/src/lib/packs/codex.md": {
       "bytes": 2402,
@@ -46,16 +46,16 @@
       "sha256": "378e31ba60c06a30d30254e3215078f8047ad5680b0d5d8dec352359cbb39b59"
     },
     "desktop/src/lib/packs/doubao.md": {
-      "bytes": 842,
-      "sha256": "ae46ab6d9a9790d671a0e5d5eb66af4cfa2cb5b914898b6e2a409173f8bcdf9d"
+      "bytes": 850,
+      "sha256": "04190b68515146d0da054a81c99e9d52e15b12f1480c6d2f3f6191c8ef5f3824"
     },
     "desktop/src/lib/packs/gemini.md": {
-      "bytes": 1656,
-      "sha256": "dd2b9586b6869fe9dda524b53d2a45c997629ea39371f650adca693aa9100698"
+      "bytes": 1698,
+      "sha256": "4c1a27f8e5c1d34d5a3af072ceaca07b4596442e75c70b3117a832faf7618426"
     },
     "desktop/src/lib/packs/glm53.md": {
       "bytes": 1567,
-      "sha256": "7909307bb4606c70c43f9c37f1e9ffc41d6c024b1d139172cf287c06419db4ed"
+      "sha256": "2bfc78fac96a08214127ae1d324da18b7517a60a4dd9a1b49556ad00faf7e1e0"
     },
     "desktop/src/lib/packs/grok.md": {
       "bytes": 1722,
@@ -66,8 +66,8 @@
       "sha256": "e34cfdf27e5c34f5c206f7fbe91ce3b8251eec0708ac35a0757b706fdc1e5422"
     },
     "desktop/src/lib/packs/kimi.md": {
-      "bytes": 2404,
-      "sha256": "9bba368bb8c07c878a91aa716acb736c1e673067fd40f6550899e7fed4162c67"
+      "bytes": 2416,
+      "sha256": "486b8c0563457460b9b13cda533749ec6cdb8cb7e83d6a63e40071fa77caf1fe"
     },
     "desktop/src/lib/packs/local-agent-skills/chatgpt-dot.md": {
       "bytes": 837,
@@ -85,9 +85,13 @@
       "bytes": 851,
       "sha256": "ca14c4ffbf5a7e3b865e6b53c707c9b54841bdb7884c339111091123cf4a8b8b"
     },
+    "desktop/src/lib/packs/local-agent-skills/opencode.md": {
+      "bytes": 715,
+      "sha256": "0e6f9fd0b59554b0194bf17660c6853fb562ca89d5a8d420dd6ab57c0f8ac345"
+    },
     "desktop/src/lib/packs/mimo.md": {
-      "bytes": 2381,
-      "sha256": "704ed16cc7d5da2b29ed4bae592bc9ccff65af4a97c9e2b514a9658b0a253027"
+      "bytes": 2386,
+      "sha256": "2af5ffa8be9330ce369f004a149bbe877ac58f482da77795af31111437fc98ca"
     },
     "desktop/src/lib/packs/routes/NORMALIZER.md": {
       "bytes": 6353,
@@ -498,16 +502,24 @@
       "sha256": "8de8bd9edf1b4ea19d66f3bc946426c6a9a10ad1cd2db89e495e6fbd848ad7b1"
     },
     "desktop/src/lib/prompt-engine.js": {
-      "bytes": 4836,
-      "sha256": "b965c5ef1613360688781a98e96a4fdf88f7e54f676b5a7d11528f25a4b0f04f"
+      "bytes": 4869,
+      "sha256": "8df0a8d527d218d6b2db466c7c2d53cf541dca907a33e55ae36ae4ff031eb1fb"
     },
     "desktop/src/lib/seat-packs.js": {
       "bytes": 4264,
       "sha256": "282708c02e7a1bfbfd5294d2a59b77f3b72157385aed3fb808a7af05ee9c2945"
     },
+    "desktop/src/shared/relay-models.js": {
+      "bytes": 2171,
+      "sha256": "9f11297ce30c29551d1c982b7a8c33bf315fb23a786c4b084445fdd66e48101c"
+    },
     "desktop/src/shared/workbench-core.js": {
-      "bytes": 9010,
-      "sha256": "b9d86fd0d3637d4401d03f61428e30d5b3976e7c66a26384429595cba0669a29"
+      "bytes": 9263,
+      "sha256": "e85e5ae6d450e0a323f867e0fad32bf05ba897a3e32122c105b2b0f805d06d49"
+    },
+    "desktop/tests/flagship-models-2026.test.js": {
+      "bytes": 2527,
+      "sha256": "413329d5e322d64a78da04348d79bcf64addeaece4a7add235c706c79205128c"
     }
   },
   "outputs": {
@@ -520,12 +532,12 @@
       "sha256": "dabe0bf3bb018f33bbc7a67bb143b1d2dc984ee2b3cbd86a09b6acf9ae35ebfd"
     },
     "claude.md": {
-      "bytes": 65107,
-      "sha256": "74beccda13150bcdc40099f16507522d223dc00d12a39575b6971a850e13cee1"
+      "bytes": 65123,
+      "sha256": "b1a99e5a91bc2c8f55382242bcac29ee4e67c123fef7997219769e70f2499d7f"
     },
     "codex.md": {
-      "bytes": 65589,
-      "sha256": "4210f762fc27f87430dbdb2cad573320fa0b9243a4a28dd80bac4948aaf2f007"
+      "bytes": 65582,
+      "sha256": "53fa5d080edd3ad7c1cfdb62bf5d9d5d7ba30cfb038f33c168d75216c2b00d69"
     },
     "cursor.md": {
       "bytes": 64635,
@@ -536,16 +548,16 @@
       "sha256": "f35b1babc161b6a5de5ce7f1135122cd69a4ceaeac301236fe45f11f08b04fca"
     },
     "doubao.md": {
-      "bytes": 3558,
-      "sha256": "f04fc2042dd2d8758fdfaf1f792541d00bce8f1c15c75ca7b404462aa9009865"
+      "bytes": 3566,
+      "sha256": "232043154eb2e1df7116bfe9b943e07e690cd0e1f7ac511c8f9154b0d4e1c05f"
     },
     "gemini.md": {
-      "bytes": 64698,
-      "sha256": "d625cd3f3ce9f70f3e746f695e638a9249d96e18bc1a83f97983ff4a5f8b17d9"
+      "bytes": 64740,
+      "sha256": "aef150dd8a1fa573f7468a2eb1f225dff9ff4602e0f99c53efa81707a0b1d1ba"
     },
     "glm53.md": {
       "bytes": 64627,
-      "sha256": "a83dd76d30663477184f90b0f60c5d6711e26fbeb3801d1cfeb420d6d6d807d2"
+      "sha256": "7389430af61d454c6ff4d6bcffce8423ff31942cdf3a714691e328e88a40e846"
     },
     "grok-bot.md": {
       "bytes": 3195,
@@ -556,24 +568,28 @@
       "sha256": "685ac359da9f306625637aab73443379a4fc7628baaa4bfeb975a8888eccea94"
     },
     "kimi.md": {
-      "bytes": 64635,
-      "sha256": "86146d27379fb7bec5807074a867b058c4e957c53f4db452c5d59d39bed8b7ca"
+      "bytes": 64643,
+      "sha256": "6d5da08c53e9c40863b534d0ff0f33730c13e6917d9374efa2bef1a84984562c"
     },
     "meta-muse.md": {
       "bytes": 3202,
       "sha256": "9a63702a577b9ccaefc2f8bc93df0d29b48ab5964cbd11ed65d1b10303c2a5b7"
     },
     "mimo.md": {
-      "bytes": 64664,
-      "sha256": "26f85f02df52d4c7d03554db21bcb2be96a83347ebb6b84c7908b929ab661e73"
+      "bytes": 64667,
+      "sha256": "d27978b93f061e242d26065378b8638162547b0b082eb290469abe75bc9e8eb3"
     },
     "models.json": {
-      "bytes": 377,
-      "sha256": "005590a9859a92cfc6d22deb7d60ed7d58439c54189fc2ec6ceab9fe34e2b4f1"
+      "bytes": 1737,
+      "sha256": "64d10da02d635021478f7143a5b7d1a08f935b748e11d176f38597c69adb5623"
+    },
+    "opencode.md": {
+      "bytes": 2872,
+      "sha256": "379b1461cd9d4b0282e19d931283cc59d648133726920482d4fe84ec14129833"
     },
     "templates.json": {
-      "bytes": 1904,
-      "sha256": "bc40d6a581c4d9e4e5928b084d9bcf588eec8426ed170d2066a2411d1fbca670"
+      "bytes": 2143,
+      "sha256": "fec4cc6eb16fde7dfc5111363fce39193b457917471401f38e73304b41ce5ba8"
     },
     "workbuddy.md": {
       "bytes": 3573,

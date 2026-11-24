@@ -9,7 +9,7 @@
 
 <!-- CHA-CODEX-POJIA:BEGIN -->
 # CHA Codex Core  ·  ASTRA LAYER SWAP
-# seat: GPT-6 Astra全模型支持 / Codex CLI
+# seat: GPT-6.2 Astra / Sol / Codex CLI
 # product: ZakoAI · 冷咖啡策略
 # control: BREAK//OPEN
 # file-role: this document is the working instruction layer

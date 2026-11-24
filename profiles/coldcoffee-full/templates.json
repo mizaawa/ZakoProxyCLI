@@ -6,32 +6,32 @@
   },
   {
     "id": "claude",
-    "name": "冷咖啡 · Claude",
+    "name": "冷咖啡 · Claude Fable 5.2 / 全模型支持",
     "source_path": "desktop/src/lib/packs/claude.md"
   },
   {
     "id": "grok",
-    "name": "冷咖啡 · Grok",
+    "name": "冷咖啡 · Grok 4.7",
     "source_path": "desktop/src/lib/packs/grok.md"
   },
   {
     "id": "deepseek",
-    "name": "冷咖啡 · DeepSeek",
+    "name": "冷咖啡 · DeepSeek v4.1 Flash 10.17版本",
     "source_path": "desktop/src/lib/packs/deepseek.md"
   },
   {
     "id": "glm53",
-    "name": "冷咖啡 · GLM 5.3",
+    "name": "冷咖啡 · GLM 5.4全模型支持",
     "source_path": "desktop/src/lib/packs/glm53.md"
   },
   {
     "id": "gemini",
-    "name": "冷咖啡 · Gemini",
+    "name": "冷咖啡 · Gemini 4 全模型支持",
     "source_path": "desktop/src/lib/packs/gemini.md"
   },
   {
     "id": "doubao",
-    "name": "冷咖啡 · 豆包",
+    "name": "冷咖啡 · 豆包 2.1",
     "source_path": "desktop/src/lib/packs/doubao.md"
   },
   {
@@ -46,12 +46,12 @@
   },
   {
     "id": "mimo",
-    "name": "冷咖啡 · MiniMax 3.1 Flash",
+    "name": "冷咖啡 · MiniMax M3.1 Flash",
     "source_path": "desktop/src/lib/packs/mimo.md"
   },
   {
     "id": "kimi",
-    "name": "冷咖啡 · Kimi K3.1",
+    "name": "冷咖啡 · Kimi K3.1 Pro",
     "source_path": "desktop/src/lib/packs/kimi.md"
   },
   {
@@ -73,5 +73,10 @@
     "id": "meta-muse",
     "name": "冷咖啡 · Meta Muse",
     "source_path": "desktop/src/lib/packs/local-agent-skills/meta-muse.md"
+  },
+  {
+    "id": "opencode",
+    "name": "冷咖啡 · OpenCode",
+    "source_path": "desktop/src/lib/packs/local-agent-skills/opencode.md"
   }
 ]

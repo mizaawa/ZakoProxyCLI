@@ -225,15 +225,15 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
     let catalog = profiles::all();
     assert_eq!(
         catalog.len(),
-        44,
-        "expected five GPT, 27 Coldcoffee, two Hanshuang, four Kimi, and six AI-Jailbreak profiles"
+        51,
+        "expected all 44 historical selections plus seven current upstream model presets"
     );
     assert_eq!(
         catalog
             .iter()
             .map(|profile| profile.models.len())
             .sum::<usize>(),
-        45
+        52
     );
     assert_eq!(
         catalog
@@ -241,7 +241,7 @@ async fn all_catalog_models_inject_native_instructions_without_mutating_client_c
             .flat_map(|profile| &profile.models)
             .collect::<std::collections::HashSet<_>>()
             .len(),
-        43
+        50
     );
 
     let captured = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
@@ -324,7 +324,7 @@ async fn every_coldcoffee_template_binds_exact_actual_models_on_all_protocols() 
         &["responses", "compact", "chat", "anthropic"],
         0,
     );
-    assert_eq!(profiles::templates().len(), 15);
+    assert_eq!(profiles::templates().len(), 16);
     for template in profiles::templates() {
         let id = format!("coldcoffee@{}@{}", template.id, hex::encode(model));
         let profile = profiles::find(&id).unwrap();

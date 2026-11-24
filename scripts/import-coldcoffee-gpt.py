@@ -11,8 +11,10 @@ from pathlib import Path
 import re
 import subprocess
 
-REPOSITORY = "https://github.com/3641397194-wq/gpt6-Astra"
-REVISION = "3249afce6b853ff2f2133e016b223db2cf38b087"
+from coldcoffee_metadata import (
+    REPOSITORY, REVISION, METADATA_FILE, atomic_write, codex_label, refresh_codex_header,
+)
+
 PACKS = "desktop/src/lib/packs/"
 PROFILES = [
     ("gpt-5.6-sol-v45", "gpt-5.6-sol"),
@@ -41,7 +43,7 @@ def json_bytes(value):
 
 
 def selected(name):
-    return name == "LICENSE" or name in [
+    return name in {"LICENSE", METADATA_FILE} or name in [
         PACKS + "codex.md", PACKS + "workflows/codex.md", PACKS + "activation-reply.md",
     ] or (name.startswith(PACKS + "routes/") and name.endswith(".md"))
 
@@ -53,6 +55,8 @@ def render(inputs):
     leaves = sorted(name.removeprefix(PACKS) for name in inputs
                     if name.startswith(PACKS + "routes/leaves/")
                     and name.endswith(".md") and not name.endswith("/INDEX.md"))
+    if len(leaves) != 80:
+        raise ValueError("Expected all 80 pinned route leaves")
     router = "\n\n".join(read(name) for name in [
         "routes/ROUTER.md", "routes/NORMALIZER.md",
         *(f"routes/{route}.md" for route in ROUTES), "routes/leaves/INDEX.md", *leaves,
@@ -60,15 +64,15 @@ def render(inputs):
     replacements = {
         "APP_TITLE": "ZakoAI · 冷咖啡策略", "ACTIVATION_WORD": "冷咖啡",
         "CONTROL_WORD": "BREAK//OPEN", "SEAT_ID": "codex",
-        "SEAT_TAG": "GPT-6 Astra全模型支持", "SEAT_NAME": "Codex",
+        "SEAT_TAG": codex_label(inputs), "SEAT_NAME": "Codex",
         "ACTIVATION_REPLY": read("activation-reply.md"),
         "WORKFLOW": read("workflows/codex.md"), "ROUTER": router,
         "IDA_MCP": "", "UNIFIED": "",
     }
-    text = read("codex.md")
+    text = refresh_codex_header(read("codex.md"), inputs)
     for key, value in replacements.items():
         text = text.replace("{{" + key + "}}", value)
-    if re.search(r"\{\{[A-Z_]+\}\}", text):
+    if re.search(r"\{\{[^{}]*\}\}", text):
         raise ValueError("Unresolved upstream GPT template")
     return (ADAPTER + text.rstrip() + "\n").encode("utf-8")
 
@@ -90,6 +94,9 @@ def import_profiles(root, checkout=None, check=False):
         recorded = json.loads(source.read_text(encoding="utf-8"))
         if recorded["repository"] != REPOSITORY or recorded["revision"] != REVISION:
             raise ValueError("Bundled upstream identity does not match the pin")
+        names = {p.relative_to(vendor).as_posix() for p in vendor.rglob("*") if p.is_file()}
+        if names != set(recorded["inputs"]):
+            raise ValueError("Bundled upstream file inventory differs")
         inputs = {name: (vendor / name).read_bytes() for name in recorded["inputs"]}
         for name, data in inputs.items():
             if not selected(name) or sha256(data) != recorded["inputs"][name]:
@@ -111,7 +118,8 @@ def import_profiles(root, checkout=None, check=False):
             "Inline the Codex seat, workflow, activation reply, router, normalizer and leaf text as request data",
             "Add API capability guidance; omit installer-specific IDA/MCP and commercial unified-work blocks",
             "Preserve the three existing exact model bindings and historical profile IDs",
-            "Keep the general default and all non-GPT profiles unchanged; model effectiveness is unverified",
+            "Regenerate GPT text from the latest pin and align its raw seat header with upstream GPT-6.2 display metadata",
+            "The general default remains unchanged; model effectiveness is unverified",
         ],
         "inputs": {name: sha256(data) for name, data in sorted(inputs.items())},
         "outputs": {
@@ -130,8 +138,7 @@ def import_profiles(root, checkout=None, check=False):
             if not path.exists() or path.read_bytes() != data:
                 raise ValueError(f"Generated file differs: {path}")
         else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
+            atomic_write(path, data)
     print(f"{'Verified' if check else 'Imported'} {len(catalog)} GPT profiles from {REVISION}")
     print(f"system.md: {len(instruction)} bytes, SHA256 {sha256(instruction)}")
 

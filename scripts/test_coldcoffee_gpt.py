@@ -61,5 +61,19 @@ class ColdcoffeeGptTests(unittest.TestCase):
             MODULE.render(inputs)
 
 
+    def test_gpt_and_full_catalog_use_the_same_latest_revision_and_text(self):
+        source = json.loads((self.root / "profiles/coldcoffee-gpt/SOURCE.json").read_text(encoding="utf-8"))
+        current = json.loads((ROOT / "profiles/coldcoffee-full/SOURCE.json").read_text(encoding="utf-8"))
+        self.assertEqual(source["revision"], current["revision"])
+        self.assertEqual((self.root / "profiles/coldcoffee-gpt/system.md").read_bytes(),
+                         (ROOT / "profiles/coldcoffee-full/codex.md").read_bytes())
+        self.assertIn("# seat: GPT-6.2 Astra / Sol / Codex CLI",
+                      (self.root / "profiles/coldcoffee-gpt/system.md").read_text(encoding="utf-8"))
+
+    def test_unlisted_bundled_file_is_rejected(self):
+        (self.root / "third_party/coldcoffee-gpt/unexpected.md").write_text("unexpected", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "file inventory differs"):
+            self.check_import()
+
 if __name__ == "__main__":
     unittest.main()

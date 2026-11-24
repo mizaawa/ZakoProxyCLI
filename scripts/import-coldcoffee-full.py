@@ -8,32 +8,41 @@ The immutable legacy.json snapshot is validated, never regenerated or replaced.
 import argparse
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
 
-REPOSITORY = "https://github.com/3641397194-wq/gpt6-Astra"
-REVISION = "86997bffc0355930918c82311e2c34aa04d2b5b8"
+from coldcoffee_metadata import (
+    REPOSITORY, REVISION, atomic_write, codex_label, refresh_codex_header, seat_labels,
+)
+
 PACKS = "desktop/src/lib/packs/"
 LEGACY_SHA256 = "33265fc40942bfe571b0d9863facca90c0486ccd1fbe5455a3af176aeeea40d9"
-SEATS = {
-    "codex": "GPT / Codex", "claude": "Claude", "grok": "Grok",
-    "deepseek": "DeepSeek", "glm53": "GLM 5.3", "gemini": "Gemini",
-    "doubao": "豆包", "workbuddy": "WorkBuddy", "cursor": "Cursor",
-    "mimo": "MiniMax 3.1 Flash", "kimi": "Kimi K3.1",
-}
+# Stable template IDs; every display label comes from pinned upstream metadata.
+SEATS = (
+    "codex", "claude", "grok", "deepseek", "glm53", "gemini",
+    "doubao", "workbuddy", "cursor", "mimo", "kimi",
+)
 VARIANTS = {
     "grok-bot": "Grok Bot", "claude-duet": "Claude Duet",
-    "chatgpt-dot": "ChatGPT Dot", "meta-muse": "Meta Muse",
+    "chatgpt-dot": "ChatGPT Dot", "meta-muse": "Meta Muse", "opencode": "OpenCode",
 }
 GPT_62_MODELS = ("gpt-6.2-astra", "gpt-6.2-sol")
+# Exact, opt-in presets supported by the pinned relay recommendation catalog.
+# Display-only Kimi/MiniMax/Doubao names remain templates for real provider IDs.
+MODEL_PRESETS = [
+    *((model, "gpt-6.2", "codex") for model in GPT_62_MODELS),
+    ("glm-5.4", "glm", "glm53"),
+    ("claude-fable-5.2", "claude", "claude"),
+    *((f"gemini-4{suffix}", "gemini", "gemini")
+      for suffix in ("", "-carbon", "-neon", "-hydrogen", "-argon")),
+]
 INSTALLER_SEATS = {"doubao", "workbuddy", "cursor", "mimo", "kimi"}
 ROUTES = ["cha-bin-unlock", "cha-playfield", "cha-netcast", "cha-apicloud", "cha-labpipe", "cha-inkstage"]
 REFERENCE_FILES = {
     "LICENSE", "desktop/src/shared/workbench-core.js", "desktop/src/lib/seat-packs.js",
     "desktop/src/lib/prompt-engine.js", "desktop/src/lib/local-agent-skills.js",
+    "desktop/src/shared/relay-models.js", "desktop/tests/flagship-models-2026.test.js",
 }
 ADAPTER = """# ZakoAI · 冷咖啡 API 内联适配
 
@@ -46,7 +55,7 @@ ADAPTER = """# ZakoAI · 冷咖啡 API 内联适配
 模板显示名不是 API 模型 ID，实际模型以客户端本次请求为准。
 
 """
-# Preserve the already-released GPT payload byte for byte.
+# Both GPT catalogs use the latest pinned source and the same API adapter.
 GPT_ADAPTER = """# ZakoAI · 冷咖啡 GPT API 内联适配
 
 以下 Codex 席位、工作流和路由正文是本次 API 请求的内联策略数据。
@@ -101,18 +110,6 @@ def strip_installation(text, template_id):
     return text
 
 
-def codex_label(inputs):
-    # Read current workbench display metadata for the API catalog.
-    # The separate seat-packs/prompt-engine rendering chain is preserved.
-    # Parse only the declared seat label; never execute upstream JavaScript.
-    text = inputs["desktop/src/shared/workbench-core.js"].decode("utf-8")
-    seats = re.search(r"const SEATS = \[(.*?)\];", text, re.DOTALL)
-    labels = re.findall(r"\{id:'codex',tag:'([^'\r\n]+)'", seats[1] if seats else "")
-    if len(labels) != 1 or not labels[0].strip():
-        raise ValueError("Expected exactly one upstream Codex seat label")
-    return labels[0]
-
-
 def render(inputs, template_id):
     def read(name):
         return inputs[PACKS + name].decode("utf-8").rstrip()
@@ -120,6 +117,16 @@ def render(inputs, template_id):
     is_variant = template_id in VARIANTS
     relative = f"local-agent-skills/{template_id}.md" if is_variant else f"{template_id}.md"
     text = strip_installation(read(relative), template_id)
+    labels = seat_labels(inputs)
+    if set(labels) != set(SEATS):
+        raise ValueError("Upstream seat inventory differs; review new or removed templates")
+    if template_id == "codex":
+        text = refresh_codex_header(text, inputs)
+    if template_id == "opencode":
+        text, count = re.subn(r"^这是随冷咖啡工作台安装到 OpenCode[^\n]+$", "",
+                             text, flags=re.MULTILINE)
+        if count != 1:
+            raise ValueError("Expected one OpenCode installation paragraph")
     replacements = {"ACTIVATION_REPLY": read("activation-reply.md")}
     if not is_variant:
         leaves = sorted(name.removeprefix(PACKS) for name in inputs
@@ -134,7 +141,7 @@ def render(inputs, template_id):
         replacements.update({
             "APP_TITLE": "ZakoAI · 冷咖啡策略", "ACTIVATION_WORD": "冷咖啡",
             "CONTROL_WORD": "BREAK//OPEN", "SEAT_ID": template_id,
-            "SEAT_TAG": SEATS[template_id], "SEAT_NAME": SEATS[template_id],
+            "SEAT_TAG": labels[template_id], "SEAT_NAME": labels[template_id],
             "WORKFLOW": API_WORKFLOW.rstrip() if template_id in INSTALLER_SEATS
             else read(f"workflows/{template_id}.md"),
             "ROUTER": router, "IDA_MCP": "", "UNIFIED": "",
@@ -172,19 +179,6 @@ def load_inputs(root, checkout=None):
     return inputs
 
 
-def atomic_write(path, data):
-    if path.exists() and path.read_bytes() == data:
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        stream.write(data)
-    try:
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def import_profiles(root, checkout=None, check=False):
     target = root / "profiles/coldcoffee-full"
     # Git's text eol rules normalize the snapshot to LF in commits. Normalize
@@ -197,7 +191,12 @@ def import_profiles(root, checkout=None, check=False):
         raise ValueError("Expected all 42 unique historical profiles")
     inputs = load_inputs(root, checkout)
     outputs = {f"{template_id}.md": render(inputs, template_id) for template_id in [*SEATS, *VARIANTS]}
-    labels = {**SEATS, **VARIANTS, "codex": codex_label(inputs)}
+    labels = {**seat_labels(inputs), **VARIANTS}
+    # Fail closed if an upstream variant is added without a catalog entry.
+    variants = {name.removeprefix(PACKS + "local-agent-skills/").removesuffix(".md")
+                for name in inputs if name.startswith(PACKS + "local-agent-skills/")}
+    if variants != set(VARIANTS):
+        raise ValueError("Upstream local Agent inventory differs")
     templates = [{
         "id": template_id, "name": f"冷咖啡 · {name}",
         "source_path": PACKS + (f"local-agent-skills/{template_id}.md" if template_id in VARIANTS else f"{template_id}.md"),
@@ -206,23 +205,23 @@ def import_profiles(root, checkout=None, check=False):
     # Explicit project model IDs, not inferred availability from upstream labels.
     outputs["models.json"] = json_bytes([{
         "id": f"coldcoffee-{model}-v1",
-        "name": f"冷咖啡 · {labels['codex']} · {model}",
-        "models": [model], "model_family": "gpt-6.2",
-    } for model in GPT_62_MODELS])
+        "name": f"冷咖啡 · {labels[seat]} · {model}",
+        "models": [model], "model_family": family,
+    } for model, family, seat in MODEL_PRESETS])
     source = {
         "repository": REPOSITORY, "revision": REVISION,
         "license": "MIT", "copyright": "Copyright (c) 2026 3641397194-wq",
         "validation": "unverified",
         "adaptations": [
-            "Import all 11 seats and 4 local Agent workflows as inert API request text; execute no upstream code",
+            "Import all 11 seats and 5 local Agent workflows as inert API request text; execute no upstream code",
             "Inline the shared activation reply, workflows, router, normalizer and 80 leaves where requested by each seat",
             "Remove seat/variant installation frontmatter, installation paragraphs and target-file labels",
             "Replace installer-centric workflows for doubao, workbuddy, cursor, mimo and kimi with API delivery guidance",
             "Omit installer IDA/MCP and commercial unified-work blocks; preserve their upstream source for provenance",
-            "Add truthful API capability guidance; preserve the v0.13.4 GPT payload byte for byte",
-            "Read the current Codex display label from upstream shared workbench metadata without executing JavaScript",
-            "Add separate exact-model presets for gpt-6.2-astra and gpt-6.2-sol; keep the shared Codex payload unchanged",
-            "Treat all names as template labels, not API model IDs; caller must bind actual available models",
+            "Regenerate every active template from the pinned source with truthful API capability guidance",
+            "Read all current seat display labels from upstream metadata; align the stale raw Codex header with its current GPT-6.2 label",
+            "Retain GPT-6.2 exact presets; add GLM-5.4, Claude Fable 5.2 and Gemini 4 family exact presets from upstream relay recommendations",
+            "Display-only Kimi K3.1 Pro, MiniMax M3.1 Flash and Doubao 2.1 labels remain templates; callers bind actual provider model IDs",
             "Preserve all 42 historical active profiles in immutable legacy.json for exact-match configuration migration",
         ],
         "inputs": {name: {"bytes": len(data), "sha256": sha256(data)} for name, data in sorted(inputs.items())},
@@ -238,7 +237,7 @@ def import_profiles(root, checkout=None, check=False):
                 raise ValueError(f"Generated file differs: {path}")
         else:
             atomic_write(path, data)
-    print(f"{'Verified' if check else 'Imported'} {len(templates)} templates from {REVISION}; 42 legacy profiles preserved; {len(GPT_62_MODELS)} GPT-6.2 presets")
+    print(f"{'Verified' if check else 'Imported'} {len(templates)} templates from {REVISION}; 42 legacy profiles preserved; {len(MODEL_PRESETS)} exact model presets")
     print(f"Codex: {len(outputs['codex.md'])} bytes, SHA256 {sha256(outputs['codex.md'])}")
 
 

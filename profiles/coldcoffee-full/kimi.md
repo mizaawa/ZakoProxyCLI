@@ -9,9 +9,9 @@
 模板显示名不是 API 模型 ID，实际模型以客户端本次请求为准。
 
 <!-- CHA-KIMI-POJIA:BEGIN -->
-# 冷咖啡常驻席 · Kimi K3.1
+# 冷咖啡常驻席 · Kimi K3.1 Pro
 
-席位：Kimi K3.1
+席位：Kimi K3.1 Pro
 产品：ZakoAI · 冷咖啡策略
 控制词：BREAK//OPEN
 

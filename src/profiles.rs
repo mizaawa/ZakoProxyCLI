@@ -26,7 +26,7 @@ pub struct ProfileMetadata {
     pub validation: String,
 }
 
-const COLDCOFFEE_REVISION: &str = "86997bffc0355930918c82311e2c34aa04d2b5b8";
+const COLDCOFFEE_REVISION: &str = "a30126e7c7d6c2ffe6b08f007cbc055d9b498f71";
 
 #[derive(Deserialize, Serialize)]
 pub struct ProfileTemplate {
@@ -69,6 +69,7 @@ pub fn templates() -> &'static [ProfileTemplate] {
                 "claude-duet" => include_str!("../profiles/coldcoffee-full/claude-duet.md"),
                 "chatgpt-dot" => include_str!("../profiles/coldcoffee-full/chatgpt-dot.md"),
                 "meta-muse" => include_str!("../profiles/coldcoffee-full/meta-muse.md"),
+                "opencode" => include_str!("../profiles/coldcoffee-full/opencode.md"),
                 _ => panic!("Unsupported Coldcoffee template"),
             }
             .into();
@@ -190,10 +191,10 @@ pub fn all() -> &'static [Profile] {
             .into();
             profiles.push(profile);
         }
-        let gpt_62: Vec<Profile> =
+        let current_models: Vec<Profile> =
             serde_json::from_str(include_str!("../profiles/coldcoffee-full/models.json"))
-                .expect("Embedded GPT-6.2 catalog must be valid JSON");
-        profiles.extend(gpt_62);
+                .expect("Embedded current model catalog must be valid JSON");
+        profiles.extend(current_models);
         let mut ids = std::collections::HashSet::new();
         for profile in &mut profiles {
             assert!(ids.insert(profile.id.clone()), "Profile IDs must be unique");
@@ -329,7 +330,7 @@ mod tests {
 
     #[test]
     fn template_bindings_are_exact_canonical_and_do_not_guess_model_names() {
-        assert_eq!(templates().len(), 15);
+        assert_eq!(templates().len(), 16);
         let model = "provider/实际模型";
         for template in templates() {
             let id = format!("coldcoffee@{}@{}", template.id, hex::encode(model));
@@ -381,7 +382,7 @@ mod tests {
         let historical: Vec<Profile> =
             serde_json::from_str(include_str!("../profiles/coldcoffee-full/legacy.json")).unwrap();
         assert_eq!(historical.len(), 42);
-        assert_eq!(all().len(), historical.len() + 2);
+        assert_eq!(all().len(), historical.len() + 9);
         for old in historical {
             let current = find(&old.id).unwrap();
             assert_eq!(current.models, old.models);
@@ -440,7 +441,7 @@ mod tests {
         let entries: Vec<serde_json::Value> =
             serde_json::from_str(include_str!("../profiles/coldcoffee/index.json")).unwrap();
         assert_eq!(entries.len(), 28);
-        assert_eq!(all().len(), 44);
+        assert_eq!(all().len(), 51);
         let mut models = std::collections::HashSet::new();
         for entry in entries {
             let profile = find(entry["id"].as_str().unwrap()).unwrap();
@@ -621,6 +622,70 @@ mod tests {
                 .unwrap()
                 .instruction
         );
+    }
+
+    #[test]
+    fn current_model_presets_replace_family_text_without_automatic_or_fuzzy_matching() {
+        for (model, family, seat) in [
+            ("glm-5.4", "glm", "glm53"),
+            ("claude-fable-5.2", "claude", "claude"),
+            ("gemini-4", "gemini", "gemini"),
+            ("gemini-4-carbon", "gemini", "gemini"),
+            ("gemini-4-neon", "gemini", "gemini"),
+            ("gemini-4-hydrogen", "gemini", "gemini"),
+            ("gemini-4-argon", "gemini", "gemini"),
+        ] {
+            let profile = find(&format!("coldcoffee-{model}-v1")).unwrap();
+            let template = templates()
+                .iter()
+                .find(|template| template.id == seat)
+                .unwrap();
+            assert_eq!(profile.models, [model]);
+            assert_eq!(profile.model_family, family);
+            assert_eq!(profile.instruction, template.instruction);
+            let metadata = profile.metadata.as_ref().unwrap();
+            assert_eq!(metadata.source_revision, COLDCOFFEE_REVISION);
+            assert_eq!(metadata.variant, seat);
+            assert_eq!(metadata.validation, "unverified");
+            let group = Group {
+                profile_ids: vec![profile.id.clone()],
+                ..Default::default()
+            };
+            assert_eq!(
+                instruction(&group, model),
+                Some(profile.instruction.as_str())
+            );
+            for unmatched in [
+                model.to_uppercase(),
+                format!("{model}-extra"),
+                format!("provider/{model}"),
+            ] {
+                assert!(instruction(&group, &unmatched).is_none());
+            }
+            assert!(instruction(&Group::default(), model).is_none());
+        }
+        // All five existing GPT model IDs now resolve to the current Codex text.
+        for model in [
+            "gpt-5.6-sol",
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6.2-astra",
+            "gpt-6.2-sol",
+        ] {
+            let profile = all()
+                .iter()
+                .find(|p| p.models.iter().any(|m| m == model))
+                .unwrap();
+            assert_eq!(
+                profile.instruction,
+                include_str!("../profiles/coldcoffee-gpt/system.md")
+            );
+            assert!(
+                profile
+                    .instruction
+                    .contains("# seat: GPT-6.2 Astra / Sol / Codex CLI")
+            );
+        }
     }
 
     #[test]

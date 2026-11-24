@@ -9,9 +9,9 @@
 模板显示名不是 API 模型 ID，实际模型以客户端本次请求为准。
 
 <!-- CHA-DOUBAO-POJIA:BEGIN -->
-# 冷咖啡 / 豆包
+# 冷咖啡 / 豆包 2.1
 
-席位：豆包
+席位：豆包 2.1
 标记：DOUBAO//SKILL
 产品：ZakoAI · 冷咖啡策略
 控制词：BREAK//OPEN

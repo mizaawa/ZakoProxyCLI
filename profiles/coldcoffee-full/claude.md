@@ -9,9 +9,9 @@
 模板显示名不是 API 模型 ID，实际模型以客户端本次请求为准。
 
 <!-- CHA-CLAUDE-POJIA:BEGIN -->
-# CHA · Claude Code全模型支持 常驻简报
+# CHA · Claude Fable 5.2 / 全模型支持 常驻简报
 
-席位：Claude Code全模型支持
+席位：Claude Fable 5.2 / 全模型支持
 产品：ZakoAI · 冷咖啡策略
 控制词：BREAK//OPEN
 档位：MAX

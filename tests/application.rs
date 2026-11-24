@@ -780,7 +780,7 @@ async fn coldcoffee_template_catalog_and_explicit_bindings_persist_and_validate(
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(templates.as_array().unwrap().len(), 15);
+    assert_eq!(templates.as_array().unwrap().len(), 16);
     assert!(
         templates
             .as_array()

@@ -1,13 +1,14 @@
 {
   "repository": "https://github.com/3641397194-wq/gpt6-Astra",
-  "revision": "3249afce6b853ff2f2133e016b223db2cf38b087",
+  "revision": "a30126e7c7d6c2ffe6b08f007cbc055d9b498f71",
   "license": "MIT",
   "copyright": "Copyright (c) 2026 3641397194-wq",
   "adaptations": [
     "Inline the Codex seat, workflow, activation reply, router, normalizer and leaf text as request data",
     "Add API capability guidance; omit installer-specific IDA/MCP and commercial unified-work blocks",
     "Preserve the three existing exact model bindings and historical profile IDs",
-    "Keep the general default and all non-GPT profiles unchanged; model effectiveness is unverified"
+    "Regenerate GPT text from the latest pin and align its raw seat header with upstream GPT-6.2 display metadata",
+    "The general default remains unchanged; model effectiveness is unverified"
   ],
   "inputs": {
     "LICENSE": "d0a8ebb576056a520155115c7781197523b9ab355b21d42a08ea2fb1b868de2c",
@@ -102,16 +103,17 @@
     "desktop/src/lib/packs/routes/leaves/ply-unity.md": "c77b63b26c06b4417774d4f5df2ebc8d556e4e8c4b57c51ca4bf3f7e89d53515",
     "desktop/src/lib/packs/routes/leaves/ply-unreal.md": "7f77646d90f1da6460e73e6b5cfec2b849e03986e3f4c9ae132239ea5890be65",
     "desktop/src/lib/packs/routes/leaves/ply-wall.md": "33882ca195eabbdd89057c38332edef1e12d035f1b8963379305e9ea1a7ddc81",
-    "desktop/src/lib/packs/workflows/codex.md": "e43111915b7444735a3ab80ae3f3a307118c0580e0ce967f0b936284f0923011"
+    "desktop/src/lib/packs/workflows/codex.md": "e43111915b7444735a3ab80ae3f3a307118c0580e0ce967f0b936284f0923011",
+    "desktop/src/shared/workbench-core.js": "e85e5ae6d450e0a323f867e0fad32bf05ba897a3e32122c105b2b0f805d06d49"
   },
   "outputs": {
     "system.md": {
-      "bytes": 65589,
-      "sha256": "4210f762fc27f87430dbdb2cad573320fa0b9243a4a28dd80bac4948aaf2f007"
+      "bytes": 65582,
+      "sha256": "53fa5d080edd3ad7c1cfdb62bf5d9d5d7ba30cfb038f33c168d75216c2b00d69"
     },
     "../index.json": {
-      "bytes": 204168,
-      "sha256": "fc09a07913a547dd6a4396083f4e248a168bb9f8d39600e21aeac979d8002389"
+      "bytes": 204147,
+      "sha256": "aee6302213b552f8b9d608bedc916b5b65bb40d3f3bba60a78f769c5b0f7352b"
     }
   }
 }
