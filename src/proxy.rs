@@ -1243,6 +1243,13 @@ mod tests {
         apply_instruction(&mut body, &group, "other").unwrap();
         assert_eq!(body, original);
         apply_instruction(&mut body, &group, &profile.models[0]).unwrap();
+        if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
+            assert_eq!(
+                body, original,
+                "selected profile must leave the request untouched"
+            );
+            return;
+        }
         assert_eq!(
             body["instructions"],
             format!("{}\n\nExisting", profile.instruction)
@@ -1271,6 +1278,10 @@ mod tests {
             let original = json!({"model":model,"instructions":"Existing instructions","input":[{"role":"user","content":"hello"}],"tools":[{"type":"function","name":"tool"}],"metadata":{"custom":true},"store":false});
             let mut body = original.clone();
             apply_instruction(&mut body, &group, model).unwrap();
+            if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
+                assert_eq!(body, original);
+                continue;
+            }
             assert_eq!(
                 body["instructions"],
                 format!("{}\n\nExisting instructions", expected.instruction)
@@ -1315,6 +1326,10 @@ mod tests {
         }
         let mut absent = json!({"model":"gpt-6-astra"});
         apply_instruction(&mut absent, &group, "gpt-6-astra").unwrap();
+        if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
+            assert!(absent.get("instructions").is_none());
+            return;
+        }
         assert_eq!(absent["instructions"], six.instruction);
         let mut empty = json!({"instructions":""});
         apply_instruction(&mut empty, &group, "gpt-6-astra").unwrap();
@@ -1856,7 +1871,9 @@ mod tests {
                 .unwrap();
             let mut expected = original.clone();
             expected["model"] = json!(actual);
-            expected["instructions"] = json!(format!("{}\n\nOriginal", profile.instruction));
+            if option_env!("ZAKO_DEPLOYMENT_FLAVOR") != Some("source-maintenance") {
+                expected["instructions"] = json!(format!("{}\n\nOriginal", profile.instruction));
+            }
             assert_eq!(*body, expected);
         }
         let logs = state.store.logs(0, store::now() + 10).unwrap();

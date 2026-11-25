@@ -1438,7 +1438,10 @@ mod tests {
             None,
         );
         assert!(!status.configured);
-        assert!(status.update_available);
+        assert_eq!(
+            status.update_available,
+            option_env!("ZAKO_DEPLOYMENT_FLAVOR") != Some("source-maintenance")
+        );
         assert_eq!(status.latest.unwrap().tag, "v999.0.0");
         task.abort();
     }

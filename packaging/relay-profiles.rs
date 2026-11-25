@@ -100,3 +100,32 @@ pub(crate) fn legacy_profile(_: &[String], _: &str) -> Option<&'static Profile> 
 pub fn instruction(_: &Group, _: &str) -> Option<&'static str> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn metadata_is_compatible_but_never_injects_into_requests() {
+        let group = Group {
+            profile_ids: all().iter().map(|p| p.id.clone()).collect(),
+            default_strategy_enabled: true,
+            ..Group::default()
+        };
+        for p in all() {
+            assert!(find(&p.id).is_some());
+            for model in &p.models {
+                assert!(instruction(&group, model).is_none());
+            }
+        }
+        for t in templates() {
+            let id = format!("coldcoffee@{}@{}", t.id, hex::encode("example-model"));
+            assert!(find(&id).is_some());
+            let selected = Group {
+                profile_ids: vec![id],
+                ..group.clone()
+            };
+            assert!(instruction(&selected, "example-model").is_none());
+        }
+        assert!(instruction(&group, "unknown").is_none());
+    }
+}
