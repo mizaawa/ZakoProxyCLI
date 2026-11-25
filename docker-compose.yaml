@@ -2,12 +2,10 @@ name: zakoai-proxy
 
 services:
   proxy:
-    image: ghcr.io/mizaawa/zakoai-proxy-cli:latest
     build:
       context: .
       dockerfile: Dockerfile
       target: runtime
-    pull_policy: missing
     init: true
     restart: unless-stopped
     ports:

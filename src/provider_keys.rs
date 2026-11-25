@@ -481,12 +481,29 @@ fn persist_auth(s: &Shared, before: &Provider, after: &Provider) -> Result<(), A
     })?;
     Ok(())
 }
+/// Only Sub2API sessions that can rotate credentials need an exclusive lease.
+/// Static-token key reads must stay concurrent so a slow fetch cannot block a key switch or revocation.
+async fn key_session(
+    s: &Shared,
+    id: &str,
+) -> Result<(Provider, Option<tokio::sync::OwnedMutexGuard<()>>), ApiError> {
+    let provider = providers::lookup(s, id)?;
+    if provider.kind == "sub2api"
+        && (provider.auth_mode == "password" || !provider.refresh_token.is_empty())
+    {
+        let guard = s.provider_sessions.lock(id).await;
+        Ok((providers::lookup(s, id)?, Some(guard)))
+    } else {
+        Ok((provider, None))
+    }
+}
+
 async fn load(
     s: &Shared,
     provider_id: &str,
     selected: Option<&str>,
 ) -> Result<(Provider, Vec<ProviderKey>), ApiError> {
-    let before = providers::lookup(s, provider_id)?;
+    let (before, _session) = key_session(s, provider_id).await?;
     providers::require_authenticated(&before)?;
     let mut p = before.clone();
     let result = async {
@@ -551,7 +568,7 @@ pub async fn groups(
     Path(id): Path<String>,
 ) -> ApiResult<Value> {
     crate::api::auth(&s, &h)?;
-    let before = providers::lookup(&s, &id)?;
+    let (before, _session) = key_session(&s, &id).await?;
     providers::require_authenticated(&before)?;
     let mut provider = before.clone();
     let result = authenticated_groups(&s, &mut provider).await;
@@ -567,7 +584,7 @@ pub async fn create(
     Json(input): Json<CreateKeyInput>,
 ) -> ApiResult<Value> {
     crate::api::auth(&s, &h)?;
-    let before = providers::lookup(&s, &id)?;
+    let (before, _session) = key_session(&s, &id).await?;
     providers::require_authenticated(&before)?;
     if input.group_id.is_empty() || input.group_id.len() > 256 {
         return Err(bad("请选择有效的上游分组"));

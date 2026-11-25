@@ -42,6 +42,7 @@ pub struct App {
     pub proxy_clients: Mutex<HashMap<String, (String, reqwest::Client)>>,
     pub runtime: Mutex<HashMap<String, Runtime>>,
     pub login_attempts: Mutex<HashMap<String, (i64, u32)>>,
+    pub(crate) provider_sessions: providers::SessionLocks,
     pub(crate) provider_preflights: Mutex<HashMap<String, (i64, providers::Provider)>>,
     pub web_dir: std::path::PathBuf,
 }
@@ -155,7 +156,9 @@ pub fn app(state: Shared) -> Router {
     Router::new()
         .route(
             "/health",
-            get(|| async { axum::Json(json!({"status":"ok"})) }),
+            get(|| async {
+                axum::Json(json!({"status":"ok", "version":env!("CARGO_PKG_VERSION")}))
+            }),
         )
         .route("/api/bootstrap", get(api::bootstrap))
         .route("/api/setup", post(api::setup))
@@ -364,6 +367,7 @@ pub fn new_app(data_dir: &std::path::Path, web_dir: std::path::PathBuf) -> Resul
         runtime: Mutex::new(HashMap::new()),
         proxy_clients: Mutex::new(HashMap::new()),
         login_attempts: Mutex::new(HashMap::new()),
+        provider_sessions: Default::default(),
         provider_preflights: Mutex::new(HashMap::new()),
         web_dir,
     }))

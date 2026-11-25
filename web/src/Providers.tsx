@@ -353,7 +353,7 @@ function ProviderCard({ provider, busy, onRefresh, onEdit, onDelete }: { provide
     {(provider.notes || provider.total_usage != null) && <div className="provider-card-details">{provider.notes && <p title={provider.notes}>{provider.notes}</p>}{provider.total_usage != null && <span>累计消费 <strong>{money(provider.total_usage)}</strong></span>}</div>}
     {awaitingLogin && <div className="provider-login-state" role="status"><span><KeyRound size={19} /></span><div><strong>尚未登录，统计暂不可用</strong><p>配置站点登录凭据后，即可读取余额与用量。</p><p><Button className="small-button" onClick={onEdit} disabled={busy}><KeyRound size={14} />配置登录</Button></p></div></div>}
     {provider.status === "error" && !awaitingLogin && <div className="provider-sync-error" role="status"><AlertCircle size={15} /><span>{provider.last_error || "同步失败，请检查站点和登录凭据后重试。"}{provider.last_synced_at ? " · 当前保留上次成功获取的数据" : ""}</span></div>}
-    <div className={`provider-card-footer${awaitingLogin ? " is-official" : ""}`}><span>{awaitingLogin ? <><ShieldCheck size={13} />官方预置 · 固定置顶</> : busy ? <><LoaderCircle size={13} className="spin" />正在同步站点…</> : <><span className={`provider-sync-dot ${provider.status}`} />{provider.last_synced_at ? `更新于 ${time(provider.last_synced_at)}` : "尚未获取统计数据"}</>}</span><div><a className="provider-visit" href={provider.base_url} target="_blank" rel="noopener noreferrer">登录站点<ArrowUpRight size={14} /></a>{!awaitingLogin && <Button className="small-button" busy={busy} onClick={onRefresh}>{!busy && <RefreshCw size={13} />}刷新</Button>}</div></div>
+    <div className={`provider-card-footer${awaitingLogin ? " is-official" : ""}`}><span>{awaitingLogin ? <><ShieldCheck size={13} />官方预置 · 固定置顶</> : busy ? <><LoaderCircle size={13} className="spin" />正在同步站点…</> : <><span className={`provider-sync-dot ${provider.status}`} />{provider.last_synced_at ? `更新于 ${time(provider.last_synced_at)}` : "尚未获取统计数据"} · 每 5 分钟自动刷新</>}</span><div><a className="provider-visit" href={provider.base_url} target="_blank" rel="noopener noreferrer">登录站点<ArrowUpRight size={14} /></a>{!awaitingLogin && <Button className="small-button" busy={busy} onClick={onRefresh}>{!busy && <RefreshCw size={13} />}刷新</Button>}</div></div>
   </article>;
 }
 
@@ -379,6 +379,13 @@ export function ProvidersPage({ notify }: { notify: Notice }) {
   const [deleting, setDeleting] = useState<Provider | null>(null);
   const [refreshing, setRefreshing] = useState<string[]>([]);
   const [refreshingAll, setRefreshingAll] = useState(false);
+  // Poll the local snapshot only; upstream traffic belongs to the backend, not each open tab.
+  useEffect(() => {
+    const reread = () => { if (document.visibilityState === "visible") void load(true); };
+    const timer = window.setInterval(reread, 60_000);
+    document.addEventListener("visibilitychange", reread);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", reread); };
+  }, [load]);
   const reload = () => load(true);
   const changed = () => cache.invalidate("/providers", "/accounts", "/keys", "/playground/models");
   function saveProvider(saved: Provider) {

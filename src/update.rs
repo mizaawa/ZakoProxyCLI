@@ -138,7 +138,8 @@ pub struct UpdateStatus {
 }
 fn response(state: AgentStatus, configured: bool, error: Option<String>) -> UpdateStatus {
     let current = env!("CARGO_PKG_VERSION");
-    let available = state.latest.as_ref().is_some_and(|r| r.version != current);
+    let available = option_env!("ZAKO_DEPLOYMENT_FLAVOR") != Some("source-maintenance")
+        && state.latest.as_ref().is_some_and(|r| r.version != current);
     UpdateStatus {
         current_version: current,
         configured,
@@ -1293,7 +1294,10 @@ fn agent_auth(agent: &Agent, headers: &HeaderMap) -> Result<(), ApiError> {
 }
 pub fn agent_app(agent: Arc<Agent>) -> Router {
     Router::new()
-        .route("/health", get(|| async { Json(json!({"status":"ok"})) }))
+        .route(
+            "/health",
+            get(|| async { Json(json!({"status":"ok", "version":env!("CARGO_PKG_VERSION")})) }),
+        )
         .route("/status", get(agent_status))
         .route("/latest", get(agent_latest))
         .route("/start", axum::routing::post(agent_start))
@@ -1333,6 +1337,12 @@ async fn agent_start(
 ) -> ApiResult<AgentStatus> {
     agent_auth(&agent, &headers)?;
     parse_tag(&input.tag).ok_or_else(|| bad("Invalid release tag"))?;
+    if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
+        return Err(ApiError(
+            StatusCode::CONFLICT,
+            "此镜像从项目源码部署，请在原项目目录运行部署脚本更新两个服务".into(),
+        ));
+    }
     {
         let state = agent.state.lock().await;
         if state.job.as_ref().is_some_and(Job::active) {

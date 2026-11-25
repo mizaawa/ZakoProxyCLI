@@ -9,13 +9,18 @@ FROM rust:1.99-bookworm AS backend
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-COPY profiles/ ./profiles/
-COPY third_party/gpt-instruct/ ./third_party/gpt-instruct/
+# The maintenance image ships model identifiers only, never inline strategy bodies.
+COPY packaging/relay-profiles.rs ./src/profiles.rs
+COPY packaging/relay-catalog.json ./src/relay-catalog.json
+ENV ZAKO_DEPLOYMENT_FLAVOR=source-maintenance
 RUN cargo build --locked --release
 
 FROM docker:28-cli AS docker-cli
 
-FROM debian:bookworm-slim AS updater
+FROM debian:bookworm-slim AS image-base
+LABEL org.opencontainers.image.version="0.14.4"
+
+FROM image-base AS updater
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git tar gzip \
     && rm -rf /var/lib/apt/lists/* \
@@ -31,8 +36,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
     CMD curl --fail --silent --show-error http://127.0.0.1:9000/health || exit 1
 ENTRYPOINT ["/app/zakoai-updater"]
 
-FROM debian:bookworm-slim AS runtime
-LABEL org.opencontainers.image.version="0.14.3"
+FROM image-base AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \

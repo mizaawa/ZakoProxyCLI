@@ -489,6 +489,7 @@ struct Mock {
     calls: Mutex<Vec<Call>>,
     unavailable: AtomicBool,
     fail_stats: AtomicBool,
+    extra_quota: AtomicUsize,
     require_turnstile: AtomicBool,
     omit_refresh_token: AtomicBool,
     expire_login_access: AtomicBool,
@@ -557,7 +558,7 @@ async fn upstream(State(mock): State<Arc<Mock>>, req: Request<Body>) -> Response
             return Json(json!({"success":false,"message":"invalid session"})).into_response();
         }
         return Json(match path.as_str() {
-            "/api/user/self" => json!({"success":true,"data":{"id":42,"quota":36000,"used_quota":18000,"group":"default"}}),
+            "/api/user/self" => json!({"success":true,"data":{"id":42,"quota":36000+mock.extra_quota.load(Ordering::SeqCst),"used_quota":18000,"group":"default"}}),
             "/api/log/self/stat" => json!({"success":true,"data":{"quota":9000}}),
             "/api/user/self/groups" | "/api/user/groups" => json!({"success":true,"data":{"default":1}}),
             "/api/pricing" => json!({"success":true,"data":[]}),
@@ -1814,4 +1815,128 @@ async fn testing_saved_refresh_only_form_does_not_restore_consumed_refresh_token
     );
     assert_eq!(mock.refreshes.load(Ordering::SeqCst), 2);
     assert_private(&refreshed);
+}
+
+#[tokio::test]
+async fn background_worker_updates_balances_without_a_console_and_recovers_on_the_next_tick() {
+    use std::time::Duration;
+    use tokio::time;
+    use zakoai_proxy::providers::{Provider, run_balance_refresh};
+
+    async fn wait_for(state: &Shared, id: &str, matches: impl Fn(&Provider) -> bool) -> Provider {
+        time::timeout(Duration::from_secs(8), async {
+            loop {
+                let p = state
+                    .store
+                    .config()
+                    .unwrap()
+                    .providers
+                    .into_iter()
+                    .find(|p| p.id == id)
+                    .unwrap();
+                if matches(&p) {
+                    break p;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("background refresh did not reach expected state")
+    }
+
+    let (_dir, state) = fixture();
+    let cookie = setup(&state).await;
+    let (good_url, good_site, _s1) = mock_server().await;
+    let (bad_url, bad_site, _s2) = mock_server().await;
+    let token_form = |url: &str| {
+        let mut input = form(url, "newapi", "token");
+        input["user_id"] = json!("42");
+        input["access_token"] = json!("system-token-secret");
+        input
+    };
+    let prior = create_and_refresh(&state, token_form(&bad_url), &cookie).await;
+    let bad_id = prior["id"].as_str().unwrap();
+    let (status, good, _) = request(
+        &state,
+        "POST",
+        "/api/providers",
+        token_form(&good_url),
+        &cookie,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let good_id = good["id"].as_str().unwrap();
+    assert!(good["balance"].is_null());
+    state
+        .store
+        .update(|c| {
+            let mut no_credentials = c
+                .providers
+                .iter()
+                .find(|p| p.id == good_id)
+                .unwrap()
+                .clone();
+            no_credentials.id = "no-credentials".into();
+            no_credentials.access_token.clear();
+            no_credentials.refresh_token.clear();
+            c.providers.push(no_credentials);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        request(&state, "POST", "/api/logout", json!({}), &cookie)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    bad_site.unavailable.store(true, Ordering::SeqCst);
+    let worker = Server(tokio::spawn(run_balance_refresh(state.clone())));
+    wait_for(&state, good_id, |p| p.metrics.balance == Some(2.0)).await;
+    let failed = wait_for(&state, bad_id, |p| p.status == "error").await;
+    assert_eq!(failed.metrics.balance, Some(2.0));
+    assert_eq!(failed.last_synced_at, prior["last_synced_at"].as_i64());
+    assert!(failed.last_error.is_some());
+    assert_eq!(
+        good_site
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.path == "/api/user/self")
+            .count(),
+        1
+    );
+
+    good_site.extra_quota.store(18000, Ordering::SeqCst);
+    bad_site.unavailable.store(false, Ordering::SeqCst);
+    time::pause();
+    time::advance(Duration::from_secs(300)).await;
+    time::resume(); // use real time for loopback HTTP; only fast-forward the interval
+    wait_for(&state, good_id, |p| p.metrics.balance == Some(3.0)).await;
+    wait_for(&state, bad_id, |p| {
+        p.status == "connected" && p.last_error.is_none()
+    })
+    .await;
+    assert_eq!(
+        good_site
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.path == "/api/user/self")
+            .count(),
+        2
+    );
+    let config = state.store.config().unwrap();
+    let skipped = config
+        .providers
+        .iter()
+        .find(|p| p.id == "no-credentials")
+        .unwrap();
+    assert!(
+        skipped.metrics.balance.is_none()
+            && skipped.last_error.is_none()
+            && skipped.last_synced_at.is_none()
+    );
+    drop(worker);
 }

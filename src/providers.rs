@@ -14,6 +14,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod balances;
+pub(crate) use balances::SessionLocks;
+pub use balances::run_balance_refresh;
+
 pub(crate) const OFFICIAL_PROVIDER_ID: &str = "official-zayuai";
 
 pub(crate) fn is_official(provider_id: &str) -> bool {
@@ -523,6 +527,7 @@ pub async fn edit(
     Json(input): Json<Input>,
 ) -> ApiResult<Value> {
     auth(&s, &h)?;
+    let _session = s.provider_sessions.lock(&provider_id).await;
     let old = lookup(&s, &provider_id)?;
     let p = build(&s, input, Some(&old))?;
     let identity_changed = p.base_url != old.base_url
@@ -1117,29 +1122,34 @@ fn persist_result(
         .map_err(|error| ApiError(StatusCode::CONFLICT, error))
 }
 
+async fn refresh_saved(s: &Shared, id: &str) -> Result<Provider, ApiError> {
+    // Look up credentials after acquiring the gate: another operation may just have rotated them.
+    let _session = s.provider_sessions.lock(id).await;
+    let before = lookup(s, id)?;
+    require_authenticated(&before)?;
+    let mut after = before.clone();
+    match fetch(s, &mut after, None).await {
+        Ok(metrics) => persist_result(s, &before, &after, Some(metrics), None),
+        Err(error) => persist_result(s, &before, &after, None, Some(error.message)),
+    }
+}
+
 pub async fn refresh(
     State(s): State<Shared>,
     h: HeaderMap,
     Path(provider_id): Path<String>,
 ) -> Result<Response, ApiError> {
     auth(&s, &h)?;
-    let before = lookup(&s, &provider_id)?;
-    require_authenticated(&before)?;
-    let mut after = before.clone();
-    match fetch(&s, &mut after, None).await {
-        Ok(metrics) => {
-            let stored = persist_result(&s, &before, &after, Some(metrics), None)?;
-            Ok(Json(public(&stored)).into_response())
-        }
-        Err(error) => {
-            let stored = persist_result(&s, &before, &after, None, Some(error.message.clone()))?;
-            Ok((
-                StatusCode::BAD_GATEWAY,
-                Json(json!({"error":error.message,"provider":public(&stored)})),
-            )
-                .into_response())
-        }
-    }
+    let stored = refresh_saved(&s, &provider_id).await?;
+    Ok(if let Some(error) = &stored.last_error {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error":error,"provider":public(&stored)})),
+        )
+            .into_response()
+    } else {
+        Json(public(&stored)).into_response()
+    })
 }
 
 pub async fn test(
@@ -1150,6 +1160,10 @@ pub async fn test(
     auth(&s, &h)?;
     let turnstile_token =
         (!input.turnstile_token.trim().is_empty()).then(|| input.turnstile_token.clone());
+    let _session = match &input.id {
+        Some(id) => Some(s.provider_sessions.lock(id).await),
+        None => None,
+    };
     let existing = input
         .id
         .as_deref()

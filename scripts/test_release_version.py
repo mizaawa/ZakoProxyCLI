@@ -1,8 +1,10 @@
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +30,34 @@ class ReleaseVersionTests(unittest.TestCase):
             dockerfile.write_text(text.replace(f'image.version="{current}"', 'image.version="0.0.0"'), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'Release version mismatch'):
                 MODULE.check(fixture)
+
+    def test_root_compose_requires_checkout_for_both_targets(self):
+        version = MODULE.check(ROOT)
+        self.assertFalse((ROOT / 'compose.yaml').exists(), 'would shadow docker-compose.yaml')
+        spec = (ROOT / 'docker-compose.yaml').read_text(encoding='utf-8')
+        self.assertNotRegex(spec, r'(?m)^\s+image:')
+        self.assertIn('target: runtime', spec)
+        self.assertIn('target: updater', spec)
+        self.assertIn(f'org.opencontainers.image.version="{version}"', (ROOT / 'Dockerfile').read_text(encoding='utf-8'))
+
+    def test_running_check_requires_matching_image_id_label_and_both_binaries(self):
+        version = '0.14.4'
+        sources = {s: f'test-{s}' for s in ['proxy', 'updater']}
+        def responses():
+            return [arg for service in sources for arg in [f'ctr-{service}', f'id-{service} {version}',
+                    f'id-{service}', json.dumps({'status':'ok', 'version':version})]]
+        for wrong_at, wrong_value in [(None, ''), (2, 'other-id'), (5, 'id-updater 0.6.0'),
+                                      (7, '{"status":"ok","version":"0.6.0"}'), (0, '')]:
+            with self.subTest(wrong_at=wrong_at):
+                output = responses()
+                if wrong_at is not None:
+                    output[wrong_at] = wrong_value
+                with patch.object(MODULE, 'source_images', return_value=sources), patch.object(MODULE, 'output', side_effect=output), patch('builtins.print'):
+                    if wrong_at is None:
+                        MODULE.check_running(ROOT, version)
+                    else:
+                        with self.assertRaises(ValueError):
+                            MODULE.check_running(ROOT, version)
 
 
 if __name__ == '__main__':

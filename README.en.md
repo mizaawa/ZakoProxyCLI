@@ -4,7 +4,9 @@
 
 A self-hosted Rust Responses / Chat Completions / Anthropic Messages API relay with a responsive desktop/mobile administration console, SQLite persistence, and Docker Compose deployment. The console includes a dashboard, groups, upstream accounts, client API keys, service providers, request logs, and system settings.
 
-Current release: **v0.14.3**, regenerating every existing Coldcoffee strategy, including GPT, from upstream `a30126e7c7d6c2ffe6b08f007cbc055d9b498f71`. Adds seven exact model presets and the OpenCode template; retains all 44 historical IDs, saved selections and v0.14.2 loading improvements. The catalog now has 51 fixed profiles, 50 unique model IDs and 16 templates. The general default remains unchanged. See the [release notes](docs/releases/v0.14.3.md) and [detailed GPT comparison](docs/upstream-sync-2026-11-24.md).
+Maintenance branch: **v0.14.4** (pass-through maintenance pre-release). Provider balances and usage refresh in the backend at startup and every five minutes, without an open console. Last successful metrics survive upstream errors.
+
+Last published release: **v0.14.3**, regenerating every existing Coldcoffee strategy, including GPT, from upstream `a30126e7c7d6c2ffe6b08f007cbc055d9b498f71`. Adds seven exact model presets and the OpenCode template; retains all 44 historical IDs, saved selections and v0.14.2 loading improvements. The catalog now has 51 fixed profiles, 50 unique model IDs and 16 templates. The general default remains unchanged. See the [release notes](docs/releases/v0.14.3.md) and [detailed GPT comparison](docs/upstream-sync-2026-11-24.md).
 
 ## Relay Recommendation: 杂鱼 API
 
@@ -21,15 +23,23 @@ Requires Docker Engine/Desktop with Docker Compose v2. Build from the repository
 ```sh
 git clone https://github.com/mizaawa/ZakoProxyCLI.git
 cd ZakoProxyCLI
-docker compose pull
-docker compose build --pull
-docker compose up -d --no-build
-docker compose ps
+python3 deploy.py
 ```
 
-Open **http://localhost:1990**. On a fresh data volume, create your administrator username and a password of at least 12 characters. There are no built-in administrator credentials. Subsequent visits use the same account. Initialize the account before making the service reachable by other people.
+This branch builds a **pass-through maintenance image**: saved model IDs still resolve, but the container does not bundle or inject the previous strategy bodies. Both services are updated from the checkout rather than independently replacing the relay from a different release channel. The original source files are unchanged.
 
-The pull command downloads the published image; `build --pull` refreshes its Node/Rust/Debian base images and rebuilds the application from this checkout. `up -d` starts it. The Compose image name is `ghcr.io/mizaawa/zakoai-proxy-cli:latest`; successful default-branch CI runs also publish this image and a commit-SHA tag.
+The one-command deployer (Python 3.11+; `py deploy.py` on Windows) fast-forwards the current tracking branch, creates `.env` only on first install, builds both services, waits for health and verifies the source, image IDs/labels and both actual running binaries. To deploy a specific tag or local changes, use `python3 deploy.py --local`. Keep the original project name, `.env`, and volumes on upgrade. Never run `down -v` during an upgrade.
+
+**Manual build** without Python (create `.env` from `.env.example` once):
+
+```sh
+docker compose -f docker-compose.yaml build --pull
+docker compose -f docker-compose.yaml up -d --no-build --pull never --wait
+```
+
+The root `docker-compose.yaml` needs the full checkout and uses project-local image names, not GHCR `latest`. `docker compose pull` neither updates Git nor replaces running containers; `build --pull` refreshes the base images. Use `python3 scripts/check-release-version.py --running` to verify a running deployment.
+
+Open **http://localhost:1990**. On a fresh data volume, create your administrator username and a password of at least 12 characters. There are no built-in administrator credentials. Initialize the account before making the service reachable by other people.
 
 Compose binds port **1990 to loopback by default**. Set `ZAKO_BIND_IP=0.0.0.0` only when you intend to expose the port. `ZAKO_PORT` changes the host port. Put these values in an uncommitted `.env`, for example:
 

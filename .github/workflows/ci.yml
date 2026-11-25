@@ -81,9 +81,8 @@ jobs:
       - name: Validate Compose and build image
         run: |
           docker compose config --quiet
-          docker compose pull
           docker compose build --pull
-          docker tag ghcr.io/mizaawa/zakoai-proxy-cli:latest zakoai-proxy:ci
+          docker tag "${COMPOSE_PROJECT_NAME}-proxy" zakoai-proxy:ci
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
           test "$(docker image inspect zakoai-proxy:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$version"
       - name: Test real Docker replacement and rollback
@@ -136,6 +135,7 @@ jobs:
           set -euo pipefail
           touch .env
           docker compose up -d --no-build --wait --wait-timeout 120
+          python3 scripts/check-release-version.py --running
           python3 - <<'PY'
           import http.cookiejar, json, secrets, tomllib, urllib.error, urllib.request
           with open('Cargo.toml', 'rb') as manifest:

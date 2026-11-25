@@ -11,7 +11,7 @@
 [![Release](https://img.shields.io/github/v/release/mizaawa/ZakoProxyCLI?style=flat-square&color=e991ac)](https://github.com/mizaawa/ZakoProxyCLI/releases)
 [![CI](https://github.com/mizaawa/ZakoProxyCLI/actions/workflows/ci.yml/badge.svg)](https://github.com/mizaawa/ZakoProxyCLI/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Rust-1.99-dea584?style=flat-square&logo=rust)](Cargo.toml)
-[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](compose.yaml)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](docker-compose.yaml)
 [![License](https://img.shields.io/badge/License-MIT-8bbf9f?style=flat-square)](LICENSE)
 
 简体中文 · [English](README.en.md) · [安全说明](SECURITY.md) · [API 契约](API_CONTRACT.md)
@@ -75,10 +75,9 @@
 ```sh
 git clone https://github.com/mizaawa/ZakoProxyCLI.git
 cd ZakoProxyCLI
-cp .env.example .env
 ```
 
-`.env` 必须先创建：Compose 会把它挂载到容器，控制台也会将 Turnstile 配置写入该文件。升级现有部署时保留已有 `.env`，无需重新复制模板。
+一键脚本仅在首次安装时创建 `.env`。如果手动部署，请先用 `cp .env.example .env` 创建它。升级现有部署时保留原文件：控制台将 Turnstile 配置写在这里。
 
 <details>
 <summary>Linux：允许控制台保存 Turnstile 配置</summary>
@@ -94,16 +93,26 @@ chmod 660 .env
 
 </details>
 
-### 2. 构建并启动
+### 2. 一键更新部署，或手动从源码构建
+
+此维护分支的容器是**透传构建**：保留已保存的模型 ID，但不打包或注入旧策略正文；更新只从项目源码进行，避免控制台将运行容器替换为另一个发行渠道的镜像。原策略源文件未删除。
+
+在原项目根目录执行（需要 Python 3.11+，Windows 也可用 `py deploy.py`）：
 
 ```sh
-docker compose pull
-docker compose build --pull
-docker compose up -d --no-build
-docker compose ps
+python3 deploy.py
 ```
 
-发布镜像为 `ghcr.io/mizaawa/zakoai-proxy-cli:latest`。上述流程先拉取镜像，再从当前源码构建应用与更新器；`build --pull` 同时刷新基础镜像。默认分支 CI 成功后会发布 `latest` 及对应提交 SHA 标签。
+脚本只快进当前跟踪分支，首次安装才创建 `.env`。它从同一份源码构建 `proxy` 和 `updater`，构建成功才重建容器，然后核对两个运行程序的版本和镜像 ID。升级沿用原项目名、`.env` 和数据卷，不要执行 `down -v`。如果已检出指定标签或有本地修改，用 `python3 deploy.py --local` 部署当前源码，不拉 Git。
+
+**手动构建**（先准备 `.env`，无需 Python）：
+
+```sh
+docker compose -f docker-compose.yaml build --pull
+docker compose -f docker-compose.yaml up -d --no-build --pull never --wait
+```
+
+根目录的 `docker-compose.yaml` 需要完整源码，不引用 GHCR `latest`。若手头只有以前单独下载的 `compose.yaml`，应先取得完整仓库、沿用原部署的 `.env` 和项目名。`docker compose pull` 不更新 Git，也不替换运行容器；这里的 `build --pull` 仅刷新构建用的基础镜像。可随时用 `python3 scripts/check-release-version.py --running` 核对源码、镜像及容器实际版本。
 
 ### 3. 初始化控制台
 
@@ -389,7 +398,9 @@ docker compose start
 
 ### 版本记录与旧版迁移
 
-当前版本 **v0.14.3** 替换全部现有冷咖啡专用策略为最新上游适配（包括五个 GPT 型号），补充 OpenCode、GLM 5.4、Claude Fable 5.2 和 Gemini 4 系列。原有 44 个策略 ID、模型列表与已保存选择保留；新策略默认不启用，默认兜底策略不变。保留 v0.14.2 的控制台加载优化。
+本维护分支的源码版本为 **v0.14.4**（透传维护预发布）：后台每 5 分钟刷新已配置渠道的余额和用量；上游失败仍保留最近成功的数据。
+
+上一个发布版本 **v0.14.3** 替换全部现有冷咖啡专用策略为最新上游适配（包括五个 GPT 型号），补充 OpenCode、GLM 5.4、Claude Fable 5.2 和 Gemini 4 系列。原有 44 个策略 ID、模型列表与已保存选择保留；新策略默认不启用，默认兜底策略不变。保留 v0.14.2 的控制台加载优化。
 
 #### v0.14.3 最新上游策略替换
 

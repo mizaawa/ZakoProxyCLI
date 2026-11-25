@@ -1,6 +1,6 @@
 [package]
 name = "zakoai-proxy"
-version = "0.14.3"
+version = "0.14.4"
 edition = "2024"
 license = "MIT"
 default-run = "zakoai-proxy"
@@ -33,6 +33,7 @@ lopdf = { version = "0.38", default-features = false }
 roxmltree = "0.20"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 tower = { version = "0.5", features = ["util"] }

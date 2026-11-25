@@ -15,10 +15,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = zakoai_proxy::new_app(std::path::Path::new(&data), web.into())?;
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(address=%bind,"ZakoAI is listening");
-    axum::serve(listener, zakoai_proxy::app(state))
+    let balances = tokio::spawn(zakoai_proxy::providers::run_balance_refresh(state.clone()));
+    let served = axum::serve(listener, zakoai_proxy::app(state))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
-        .await?;
+        .await;
+    balances.abort();
+    let _ = balances.await;
+    served?;
     Ok(())
 }
