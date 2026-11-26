@@ -41,7 +41,7 @@ class ReleaseVersionTests(unittest.TestCase):
         self.assertIn(f'org.opencontainers.image.version="{version}"', (ROOT / 'Dockerfile').read_text(encoding='utf-8'))
 
     def test_running_check_requires_matching_image_id_label_and_both_binaries(self):
-        version = '0.14.4'
+        version = MODULE.check(ROOT)
         sources = {s: f'test-{s}' for s in ['proxy', 'updater']}
         def responses():
             return [arg for service in sources for arg in [f'ctr-{service}', f'id-{service} {version}',

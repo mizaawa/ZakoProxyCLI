@@ -88,7 +88,11 @@ function SettingsForm({ settings, username, notify, updateCheck, updateFocusRequ
           ? ""
           : turnstileSecret || undefined,
       });
-      window.history.replaceState(null, "", `/${securityPath}`);
+      const destination = `/${securityPath}`;
+      if (window.location.pathname !== destination) {
+        window.location.replace(destination);
+        return;
+      }
       cache.get<Settings>("/settings").set(saved);
       if (saved.retention_days !== settings.retention_days) cache.invalidate("/logs", "/stats", "/keys");
       setForm(saved);
@@ -456,13 +460,12 @@ function SettingsForm({ settings, username, notify, updateCheck, updateFocusRequ
                   placeholder="验证当前密码"
                 />
               </Field>
-              <Field label="新密码" hint="至少 12 个字符">
+              <Field label="新密码">
                 <input
                   type="password"
                   autoComplete="new-password"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
-                  minLength={12}
                   required
                   placeholder="输入新密码"
                 />
@@ -473,7 +476,6 @@ function SettingsForm({ settings, username, notify, updateCheck, updateFocusRequ
                   autoComplete="new-password"
                   value={confirmPassword}
                   onChange={(event) => setConfirmPassword(event.target.value)}
-                  minLength={12}
                   required
                   placeholder="再次输入新密码"
                 />

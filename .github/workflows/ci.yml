@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-quality:
+    name: Rust Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check release metadata
+        run: |
+          python3 scripts/check-release-version.py
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --all-targets --all-features
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:build
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    needs: [rust-quality, backend-tests, frontend]
+    env:
+      COMPOSE_PROJECT_NAME: zakoai-ci-compose
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Compose and build source images
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yaml config --quiet
+          docker compose -f docker-compose.yaml build --pull
+          docker tag "${COMPOSE_PROJECT_NAME}-proxy" zakoai-proxy:ci
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
+          test "$(docker image inspect zakoai-proxy:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$version"
+      - name: Smoke test nonroot console and security entry
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name zakoai-ci --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges:true --publish 127.0.0.1:1990:1990 \
+            --volume zakoai-ci-data:/data zakoai-proxy:ci
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:1990/health > /dev/null; then break; fi
+            sleep 2
+          done
+          curl --fail --silent --show-error http://127.0.0.1:1990/health \
+            | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"] == "0.14.5"'
+          test "$(docker exec zakoai-ci id -u)" = 10001
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:1990/v1/models)" = 401
+          curl --fail --silent --show-error http://127.0.0.1:1990/api/setup \
+            --header 'Content-Type: application/json' --header 'X-Console-Path: /' \
+            --cookie-jar /tmp/zakoai-ci.cookies \
+            --data '{"username":"ci-smoke","password":"x"}' > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:1990/api/settings \
+            --request PUT --header 'Content-Type: application/json' \
+            --header 'X-Console-Path: /' --cookie /tmp/zakoai-ci.cookies \
+            --data '{"security_path":"console-ci","max_retries":2,"failure_threshold":2,"cooldown_seconds":60,"request_timeout_seconds":120,"retention_days":90}' > /dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:1990/)" = 404
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:1990/console-ci/)" = 200
+          curl --fail --silent --show-error http://127.0.0.1:1990/api/bootstrap \
+            --header 'X-Console-Path: /console-ci/' \
+            | python3 -c 'import json,sys; assert json.load(sys.stdin)["initialized"]'
+          docker exec zakoai-ci test -s /data/master.key
+          docker exec zakoai-ci test -s /data/zako.db
+      - name: Smoke test isolated source updater
+        env:
+          COMPOSE_PROJECT_NAME: zakoai-ci-compose
+          ZAKO_PORT: '1991'
+        run: |
+          set -euo pipefail
+          touch .env
+          docker compose -f docker-compose.yaml up -d --no-build --wait --wait-timeout 120
+          python3 scripts/check-release-version.py --running
+          docker compose -f docker-compose.yaml down -v
+      - name: Publish tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_NAME: ghcr.io/mizaawa/zakoai-proxy-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${IMAGE_NAME,,}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+          docker tag zakoai-proxy:ci "${image}:${GITHUB_SHA}"
+          docker tag zakoai-proxy:ci "${image}:latest"
+          docker push "${image}:${GITHUB_SHA}"
+          docker push "${image}:latest"
+      - name: Container diagnostics and cleanup
+        if: always()
+        run: |
+          docker logs zakoai-ci 2>&1 || true
+          docker rm --force zakoai-ci || true
+          docker volume rm zakoai-ci-data || true
+          COMPOSE_PROJECT_NAME=zakoai-ci-compose ZAKO_PORT=1991 docker compose -f docker-compose.yaml down -v || true

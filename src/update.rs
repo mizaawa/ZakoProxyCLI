@@ -270,8 +270,8 @@ pub async fn start(
     if parse_tag(&input.tag).is_none() {
         return Err(bad("Invalid release tag"));
     }
-    if input.current_password.is_empty() || input.current_password.len() > 1024 {
-        return Err(bad("Invalid password length"));
+    if input.current_password.is_empty() {
+        return Err(bad("Current password is required"));
     }
     {
         let mut attempts = s.login_attempts.lock().unwrap();
@@ -1827,6 +1827,23 @@ mod tests {
                     .header("content-type", "application/json")
                     .body(Body::from(
                         json!({"tag":"v0.3.0","current_password":"incorrect"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let long_password = "x".repeat(2048);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/updates")
+                    .header("cookie", &cookie)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        json!({"tag":"v0.3.0","current_password":long_password}).to_string(),
                     ))
                     .unwrap(),
             )

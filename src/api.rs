@@ -79,7 +79,7 @@ fn entry(state: &Shared, headers: &HeaderMap) -> Result<(), ApiError> {
         .get("x-console-path")
         .and_then(|h| h.to_str().ok())
         .unwrap_or("/");
-    if requested != format!("/{}", cfg.settings.security_path) {
+    if normalize_console_path(requested) != format!("/{}", cfg.settings.security_path) {
         return Err(ApiError(StatusCode::NOT_FOUND, "Not found".into()));
     }
     if let Some(origin) = headers.get(header::ORIGIN) {
@@ -95,6 +95,14 @@ fn entry(state: &Shared, headers: &HeaderMap) -> Result<(), ApiError> {
         }
     }
     Ok(())
+}
+pub fn normalize_console_path(path: &str) -> &str {
+    let normalized = path.trim_end_matches('/');
+    if normalized.is_empty() {
+        "/"
+    } else {
+        normalized
+    }
 }
 pub fn auth(state: &Shared, headers: &HeaderMap) -> Result<(), ApiError> {
     entry(state, headers)?;
@@ -210,8 +218,8 @@ pub(crate) fn verify(password: &str, hash: &str) -> bool {
     })
 }
 fn valid_password(password: &str) -> Result<(), ApiError> {
-    if password.len() > 1024 || !(12..=256).contains(&password.chars().count()) {
-        return Err(bad("Password must contain 12 to 256 characters"));
+    if password.is_empty() {
+        return Err(bad("Password cannot be empty"));
     }
     Ok(())
 }
@@ -1460,9 +1468,20 @@ mod tests {
         let hash = password_hash("a-long-secret-password").unwrap();
         assert!(verify("a-long-secret-password", &hash));
         assert!(!verify("wrong", &hash));
-        assert!(valid_password("short").is_err());
-        assert!(valid_password(&"\u{4e00}".repeat(11)).is_err());
-        assert!(valid_password(&"\u{4e00}".repeat(256)).is_ok());
-        assert!(valid_password(&"a".repeat(257)).is_err());
+        assert!(valid_password("").is_err());
+        for password in ["x".to_owned(), "\u{4e00}".repeat(513), "a".repeat(4096)] {
+            assert!(valid_password(&password).is_ok());
+            let hash = password_hash(&password).unwrap();
+            assert!(verify(&password, &hash));
+        }
+    }
+
+    #[test]
+    fn console_paths_ignore_trailing_slashes_but_keep_root_canonical() {
+        assert_eq!(normalize_console_path("/"), "/");
+        assert_eq!(normalize_console_path("/console"), "/console");
+        assert_eq!(normalize_console_path("/console/"), "/console");
+        assert_eq!(normalize_console_path("/console///"), "/console");
+        assert_eq!(normalize_console_path("///"), "/");
     }
 }

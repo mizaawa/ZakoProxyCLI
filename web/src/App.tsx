@@ -213,10 +213,7 @@ function Authentication({
               placeholder="输入账号"
             />
           </Field>
-          <Field
-            label="密码"
-            hint={!initialized ? "至少 12 个字符" : undefined}
-          >
+          <Field label="密码">
             <span className="password-input">
               <input
                 type={visible ? "text" : "password"}
@@ -224,7 +221,6 @@ function Authentication({
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 required
-                minLength={initialized ? 1 : 12}
                 placeholder="输入密码"
               />
               <IconButton
@@ -243,7 +239,6 @@ function Authentication({
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
                 required
-                minLength={12}
                 placeholder="再次输入密码"
               />
             </Field>

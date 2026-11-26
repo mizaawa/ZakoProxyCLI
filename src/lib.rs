@@ -234,12 +234,13 @@ pub fn app(state: Shared) -> Router {
         .with_state(state)
 }
 async fn console(State(state): State<Shared>, request: Request) -> Response {
-    let path = request.uri().path();
+    let request_path = request.uri().path();
+    let path = api::normalize_console_path(request_path);
     let headers = request.headers();
     if path.starts_with("/api/") || path.starts_with("/v1/") {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let asset = path.starts_with("/assets/") || path == "/favicon.svg";
+    let asset = request_path.starts_with("/assets/") || request_path == "/favicon.svg";
     // Vite assets are public; they must not contend with API requests for the SQLite lock.
     if !asset {
         let Ok(cfg) = state.store.config() else {
@@ -268,13 +269,15 @@ async fn console(State(state): State<Shared>, request: Request) -> Response {
     if asset && (path.contains("..") || path.contains('\\')) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let file = state
-        .web_dir
-        .join(if asset { &path[1..] } else { "index.html" });
+    let file = state.web_dir.join(if asset {
+        &request_path[1..]
+    } else {
+        "index.html"
+    });
     let secure = api::is_https(headers);
-    let compressed = asset && (path.ends_with(".js") || path.ends_with(".css"));
+    let compressed = asset && (request_path.ends_with(".js") || request_path.ends_with(".css"));
     let fingerprinted = asset
-        && path.rsplit_once('.').is_some_and(|(stem, _)| {
+        && request_path.rsplit_once('.').is_some_and(|(stem, _)| {
             let bytes = stem.as_bytes();
             bytes.len() >= 9
                 && bytes[bytes.len() - 9] == b'-'
