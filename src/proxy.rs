@@ -1854,6 +1854,18 @@ mod tests {
                 ));
             }
         }
+        for model in [
+            "gpt-6.2-custom",
+            "provider/Claude-New",
+            "MiniMax-M3.1",
+            "deepseek-4.1-flash",
+        ] {
+            cases.push((
+                Some(profiles::model_profile(model, &[]).unwrap().id),
+                model.into(),
+                false,
+            ));
+        }
         cases.push((None, "gpt-6.2-astra".into(), false));
         cases.push((None, "unknown-model".into(), true));
         for (selected, model, fallback) in cases {

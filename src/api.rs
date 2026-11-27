@@ -811,6 +811,8 @@ pub struct KeyInput {
     group_id: String,
     #[serde(default, deserialize_with = "explicit_key_profiles")]
     profile_ids: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "explicit_key_profiles")]
+    strategy_models: Option<Vec<String>>,
     #[serde(default, deserialize_with = "explicit_default_strategy")]
     default_strategy_enabled: Option<bool>,
     #[serde(default = "key_enabled")]
@@ -834,16 +836,7 @@ fn key_profiles(
     if !config.groups.iter().any(|group| group.id == group_id) {
         return Err("Unknown group".into());
     }
-    let supported: std::collections::HashSet<_> = config
-        .accounts
-        .iter()
-        .filter(|account| {
-            account.enabled
-                && account.provider_available()
-                && account.group_ids.iter().any(|id| id == group_id)
-        })
-        .flat_map(|account| account.models.iter().map(String::as_str))
-        .collect();
+    let supported = strategy_models_for_group(config, group_id);
     let available = |id: &str| {
         profiles::find(id).is_some_and(|profile| {
             profile
@@ -875,6 +868,60 @@ fn key_profiles(
     }
     Ok(selected)
 }
+
+fn strategy_models_for_group<'a>(
+    config: &'a Config,
+    group_id: &str,
+) -> std::collections::BTreeSet<&'a str> {
+    config
+        .accounts
+        .iter()
+        .filter(|account| {
+            account.enabled
+                && account.provider_available()
+                && account.group_ids.iter().any(|id| id == group_id)
+        })
+        .flat_map(|account| account.models.iter().map(String::as_str))
+        .collect()
+}
+
+fn resolve_key_profiles(
+    config: &Config,
+    input: &KeyInput,
+    existing: &[String],
+) -> crate::store::Result<Vec<String>> {
+    if input.strategy_models.is_some() && input.profile_ids.is_some() {
+        return Err("Specify strategy_models or profile_ids, not both".into());
+    }
+    let Some(models) = &input.strategy_models else {
+        return key_profiles(
+            config,
+            &input.group_id,
+            input
+                .profile_ids
+                .clone()
+                .unwrap_or_else(|| existing.to_vec()),
+            input.profile_ids.is_none(),
+        );
+    };
+    let supported = strategy_models_for_group(config, &input.group_id);
+    let mut selected = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for model in models {
+        if !seen.insert(model) {
+            continue;
+        }
+        if !supported.contains(model.as_str()) {
+            return Err(format!(
+                "Model {model} is not supported by this group's enabled accounts"
+            ));
+        }
+        let profile = profiles::model_profile(model, existing)
+            .ok_or_else(|| format!("No instruction profile is available for model {model}"))?;
+        selected.push(profile.id);
+    }
+    key_profiles(config, &input.group_id, selected, false)
+}
 pub async fn create_key(
     State(s): State<Shared>,
     h: HeaderMap,
@@ -885,9 +932,9 @@ pub async fn create_key(
     let key = token("sk-zako-");
     let mut k = ApiKey {
         id: id(),
-        name: input.name,
-        group_id: input.group_id,
-        profile_ids: input.profile_ids.unwrap_or_default(),
+        name: input.name.clone(),
+        group_id: input.group_id.clone(),
+        profile_ids: Vec::new(),
         default_strategy_enabled: input.default_strategy_enabled.unwrap_or(false),
         hash: digest(&key),
         secret: s.store.seal(&key)?,
@@ -896,7 +943,7 @@ pub async fn create_key(
         created_at: now(),
     };
     s.store.update(|c| {
-        k.profile_ids = key_profiles(c, &k.group_id, k.profile_ids.clone(), false)?;
+        k.profile_ids = resolve_key_profiles(c, &input, &[])?;
         c.keys.push(k.clone());
         Ok(())
     })?;
@@ -916,15 +963,7 @@ pub async fn update_key(
             .iter()
             .find(|key| key.id == id)
             .ok_or("Key not found")?;
-        let selected = key_profiles(
-            c,
-            &input.group_id,
-            input
-                .profile_ids
-                .clone()
-                .unwrap_or_else(|| existing.profile_ids.clone()),
-            input.profile_ids.is_none(),
-        )?;
+        let selected = resolve_key_profiles(c, &input, &existing.profile_ids)?;
         let k = c
             .keys
             .iter_mut()
@@ -1348,6 +1387,55 @@ pub async fn profiles(
 pub async fn profile_templates(State(s): State<Shared>, h: HeaderMap) -> ApiResult<Value> {
     auth(&s, &h)?;
     Ok(Json(json!(profiles::templates())))
+}
+
+#[derive(Deserialize)]
+pub struct StrategyModelsQuery {
+    group_id: String,
+    key_id: Option<String>,
+}
+
+pub async fn strategy_models(
+    State(s): State<Shared>,
+    h: HeaderMap,
+    Query(query): Query<StrategyModelsQuery>,
+) -> ApiResult<Value> {
+    auth(&s, &h)?;
+    let config = s.store.config()?;
+    if !config.groups.iter().any(|group| group.id == query.group_id) {
+        return Err(bad("Unknown group"));
+    }
+    let selected = if let Some(id) = &query.key_id {
+        &config
+            .keys
+            .iter()
+            .find(|key| &key.id == id)
+            .ok_or_else(|| bad("Key not found"))?
+            .profile_ids[..]
+    } else {
+        &[]
+    };
+    let selected_models: std::collections::HashSet<_> = selected
+        .iter()
+        .filter_map(|id| profiles::find(id))
+        .flat_map(|profile| profile.models.clone())
+        .collect();
+    Ok(Json(Value::Array(
+        strategy_models_for_group(&config, &query.group_id)
+            .into_iter()
+            .map(|model| {
+                let profile = profiles::model_profile(model, selected);
+                json!({
+                    "model": model,
+                    "profile_id": profile.as_ref().map(|p| &p.id),
+                    "profile_name": profile.as_ref().map(|p| &p.name),
+                    "profile_source": profile.as_ref().and_then(|p| p.metadata.as_ref()).map(|m| m.source_name),
+                    "model_family": profiles::model_family(model),
+                    "selected": selected_models.contains(model),
+                })
+            })
+            .collect(),
+    )))
 }
 #[derive(Deserialize)]
 pub struct Range {

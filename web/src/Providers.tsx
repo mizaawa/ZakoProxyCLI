@@ -387,13 +387,13 @@ export function ProvidersPage({ notify }: { notify: Notice }) {
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", reread); };
   }, [load]);
   const reload = () => load(true);
-  const changed = () => cache.invalidate("/providers", "/accounts", "/keys", "/playground/models");
+  const changed = () => cache.invalidate("/providers", "/accounts", "/keys", "/strategy-models", "/playground/models");
   function saveProvider(saved: Provider) {
     const list = cache.get<Provider[]>("/providers");
     const current = list.getSnapshot().data;
     if (current) list.set(current.some((p) => p.id === saved.id) ? current.map((p) => p.id === saved.id ? saved : p) : [...current, saved]);
     else void list.load(true);
-    cache.invalidate("/accounts", "/keys", "/playground/models");
+    cache.invalidate("/accounts", "/keys", "/strategy-models", "/playground/models");
     // Successful persistence and external usage sync have separate feedback.
     void refreshOne(saved);
   }

@@ -18,6 +18,7 @@ pub struct Profile {
 
 #[derive(Clone, Serialize)]
 pub struct ProfileMetadata {
+    pub source_name: &'static str,
     pub source_url: String,
     pub source_revision: String,
     pub variant: String,
@@ -112,9 +113,35 @@ pub fn templates() -> &'static [ProfileTemplate] {
 }
 
 pub fn model_family(model: &str) -> Option<&'static str> {
+    let lower = model.to_ascii_lowercase();
+    let model = lower.rsplit('/').next()?;
     [
-        "gpt-5.6", "gpt-6.2", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm",
+        "gpt-5.6",
+        "gpt-6.2",
+        "gpt-6.1",
+        "gpt-6",
+        "gpt",
+        "codex",
+        "o1",
+        "o3",
+        "o4",
+        "claude-duet",
+        "claude",
+        "grok-bot",
+        "grok",
+        "gemini",
+        "deepseek",
+        "glm",
         "kimi",
+        "doubao",
+        "workbuddy",
+        "cursor",
+        "minimax",
+        "mimo",
+        "chatgpt-dot",
+        "chatgpt",
+        "meta-muse",
+        "opencode",
     ]
     .into_iter()
     .find(|family| {
@@ -123,6 +150,61 @@ pub fn model_family(model: &str) -> Option<&'static str> {
                 .strip_prefix(family)
                 .is_some_and(|s| s.starts_with('-'))
     })
+}
+
+fn automatic_template(model: &str) -> Option<&'static ProfileTemplate> {
+    let seat = match model_family(model)? {
+        "gpt-5.6" | "gpt-6" | "gpt-6.1" | "gpt-6.2" | "gpt" | "codex" | "o1" | "o3" | "o4"
+        | "chatgpt" => "codex",
+        "glm" => "glm53",
+        "minimax" | "mimo" => "mimo",
+        other => other,
+    };
+    templates().iter().find(|t| t.id == seat)
+}
+
+fn valid_bound_model(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 512
+        && model.trim() == model
+        && !model.chars().any(char::is_control)
+}
+
+// Scope historical multi-model profiles to one checkbox without changing their source.
+fn for_model(mut profile: Profile, model: &str) -> Profile {
+    if profile.models.len() > 1 {
+        profile.id = format!("profile@{}@{}", profile.id, hex::encode(model));
+        profile.models = vec![model.into()];
+    }
+    profile
+}
+
+pub fn model_profile(model: &str, selected: &[String]) -> Option<Profile> {
+    if !valid_bound_model(model) {
+        return None;
+    }
+    // Existing per-key source choices win over automatic defaults.
+    if let Some(profile) = selected
+        .iter()
+        .filter_map(|id| find(id))
+        .find(|p| p.models.iter().any(|m| m == model))
+    {
+        return Some(for_model(profile.into_owned(), model));
+    }
+    if let Some(profile) = all()
+        .iter()
+        .filter(|p| p.models.iter().any(|m| m == model))
+        .min_by_key(|p| {
+            !p.metadata
+                .as_ref()
+                .is_some_and(|m| m.source_revision == COLDCOFFEE_REVISION)
+        })
+    {
+        return Some(for_model(profile.clone(), model));
+    }
+    let template = automatic_template(model)?;
+    let id = format!("coldcoffee@{}@{}", template.id, hex::encode(model));
+    Some(descriptor(&id, vec![model.into()], template))
 }
 
 fn template_instruction(template: &'static ProfileTemplate, model: &str) -> &'static str {
@@ -141,6 +223,7 @@ fn descriptor(id: &str, models: Vec<String>, template: &'static ProfileTemplate)
         instruction: template_instruction(template, &models[0]).into(),
         models,
         metadata: Some(ProfileMetadata {
+            source_name: "冷咖啡",
             source_url: template.source_url.clone(),
             source_revision: COLDCOFFEE_REVISION.into(),
             variant: template.id.clone(),
@@ -174,12 +257,7 @@ pub fn all() -> &'static [Profile] {
                 if !id.starts_with("coldcoffee-") {
                     return None;
                 }
-                let seat = match family {
-                    "gpt-5.6" | "gpt-6" | "gpt-6.1" | "gpt-6.2" => "codex",
-                    "glm" => "glm53",
-                    other => other,
-                };
-                let template = templates().iter().find(|t| t.id == seat)?;
+                let template = automatic_template(&models[0])?;
                 Some(descriptor(id, models.clone(), template))
             })
             .collect()
@@ -256,6 +334,7 @@ fn source_profile(id: &str, models: &[String], family: &'static str) -> Option<P
         model_family: family,
         instruction,
         metadata: Some(ProfileMetadata {
+            source_name: name,
             source_url,
             source_revision: revision.into(),
             variant: variant.into(),
@@ -264,8 +343,7 @@ fn source_profile(id: &str, models: &[String], family: &'static str) -> Option<P
     })
 }
 
-fn bound_template(id: &str) -> Option<(&'static ProfileTemplate, String)> {
-    let (template, encoded) = id.strip_prefix("coldcoffee@")?.split_once('@')?;
+fn decode_bound_model(encoded: &str) -> Option<String> {
     if encoded.is_empty()
         || encoded.len() > 1024
         || !encoded.len().is_multiple_of(2)
@@ -276,15 +354,33 @@ fn bound_template(id: &str) -> Option<(&'static ProfileTemplate, String)> {
         return None;
     }
     let model = String::from_utf8(hex::decode(encoded).ok()?).ok()?;
-    if model.trim() != model || model.chars().any(char::is_control) {
-        return None;
-    }
+    valid_bound_model(&model).then_some(model)
+}
+
+fn bound_template(id: &str) -> Option<(&'static ProfileTemplate, String)> {
+    let (template, encoded) = id.strip_prefix("coldcoffee@")?.split_once('@')?;
+    let model = decode_bound_model(encoded)?;
     Some((templates().iter().find(|t| t.id == template)?, model))
+}
+
+fn bound_source(id: &str) -> Option<(&'static Profile, String)> {
+    let (source, encoded) = id.strip_prefix("profile@")?.split_once('@')?;
+    let model = decode_bound_model(encoded)?;
+    let profile = all()
+        .iter()
+        .find(|p| p.id == source && p.models.contains(&model))?;
+    Some((profile, model))
 }
 
 pub fn find(id: &str) -> Option<Cow<'static, Profile>> {
     if let Some(profile) = all().iter().find(|p| p.id == id) {
         return Some(Cow::Borrowed(profile));
+    }
+    if let Some((profile, model)) = bound_source(id) {
+        let mut profile = profile.clone();
+        profile.id = id.into();
+        profile.models = vec![model];
+        return Some(Cow::Owned(profile));
     }
     let (template, model) = bound_template(id)?;
     Some(Cow::Owned(descriptor(id, vec![model], template)))
@@ -346,6 +442,9 @@ pub fn instruction(group: &Group, model: &str) -> Option<&'static str> {
                     .any(|m| m == model)
                     .then_some(p.instruction.as_str());
             }
+            if let Some((profile, bound_model)) = bound_source(id) {
+                return (bound_model == model).then_some(profile.instruction.as_str());
+            }
             let (template, bound_model) = bound_template(id)?;
             (bound_model == model).then(|| template_instruction(template, model))
         })
@@ -359,6 +458,110 @@ pub fn instruction(group: &Group, model: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_templates_follow_model_families_and_preserve_exact_names() {
+        for (model, template) in [
+            ("gpt-7-test", "codex"),
+            ("openai/GPT-6.2-new", "codex"),
+            ("o3-test", "codex"),
+            ("Claude-New", "claude"),
+            ("grok-new", "grok"),
+            ("gemini-new", "gemini"),
+            ("deepseek-new", "deepseek"),
+            ("z-ai/GLM-5.4-new", "glm53"),
+            ("kimi-new", "kimi"),
+            ("doubao-new", "doubao"),
+            ("MiniMax-M3.1", "mimo"),
+            ("workbuddy", "workbuddy"),
+            ("cursor", "cursor"),
+            ("grok-bot", "grok-bot"),
+            ("claude-duet", "claude-duet"),
+            ("chatgpt-dot", "chatgpt-dot"),
+            ("meta-muse", "meta-muse"),
+            ("opencode", "opencode"),
+        ] {
+            let profile = model_profile(model, &[]).unwrap();
+            assert_eq!(profile.metadata.as_ref().unwrap().variant, template);
+            assert_eq!(profile.models, [model]);
+            assert_eq!(find(&profile.id).unwrap().instruction, profile.instruction);
+            let group = Group {
+                profile_ids: vec![profile.id],
+                ..Default::default()
+            };
+            assert_eq!(
+                instruction(&group, model),
+                Some(profile.instruction.as_str())
+            );
+            assert!(instruction(&group, &format!("{model}-other")).is_none());
+            assert!(usable(&profile.instruction));
+            assert!(!profile.instruction.contains("冷咖啡已激活"));
+            assert!(!profile.instruction.contains("Boot latch"));
+        }
+        for model in [
+            "unknown",
+            "not-claude",
+            "mygpt-6.2",
+            "glmish",
+            "",
+            " gpt-6",
+            "gpt-6\n",
+        ] {
+            assert!(model_profile(model, &[]).is_none(), "{model}");
+        }
+        assert!(model_profile(&format!("gpt-{}", "a".repeat(509)), &[]).is_none());
+    }
+
+    #[test]
+    fn automatic_selection_keeps_fixed_sources_and_existing_overrides() {
+        for (model, id) in [
+            ("gpt-6-astra", "gpt-6-astra-v2-rc1"),
+            ("deepseek-flash", "hanshuang-deepseek-flash-v1"),
+            ("kimi-k3", "kimi-break-kimi-k3-v1"),
+            ("grok-4.6", "aijailbreak-grok-4.6-v1"),
+            ("grok-4.7", "coldcoffee-grok-4.7-v1"),
+            ("glm-5.3", "coldcoffee-glm-5.3-v1"),
+        ] {
+            assert_eq!(model_profile(model, &[]).unwrap().id, id);
+        }
+        let old = "aijailbreak-glm-5.3-v1".to_owned();
+        assert_eq!(
+            model_profile("glm-5.3", std::slice::from_ref(&old))
+                .unwrap()
+                .id,
+            old
+        );
+        let custom = format!("coldcoffee@workbuddy@{}", hex::encode("private-model"));
+        assert_eq!(
+            model_profile("private-model", std::slice::from_ref(&custom))
+                .unwrap()
+                .id,
+            custom
+        );
+        assert!(model_profile("private-model", &[]).is_none());
+    }
+
+    #[test]
+    fn multi_model_legacy_selections_split_without_enabling_sibling_models() {
+        let old = "coldcoffee-deepseek-v4.1-flash-v1".to_owned();
+        let profile = model_profile("deepseek-4.1-flash", std::slice::from_ref(&old)).unwrap();
+        assert_eq!(profile.models, ["deepseek-4.1-flash"]);
+        assert_eq!(profile.instruction, find(&old).unwrap().instruction);
+        assert_eq!(find(&profile.id).unwrap().models, profile.models);
+        let group = Group {
+            profile_ids: vec![profile.id],
+            ..Default::default()
+        };
+        assert!(
+            instruction(&group, "deepseek-4.1-flash")
+                .unwrap()
+                .contains("Hanshuang")
+        );
+        assert!(instruction(&group, "deepseek-v4.1-flash").is_none());
+        let invalid = format!("profile@{old}@{}", hex::encode("unrelated"));
+        assert!(find(&invalid).is_none());
+        assert!(find("profile@missing@61").is_none());
+    }
 
     #[test]
     fn every_catalog_entry_has_a_complete_automatically_active_body() {

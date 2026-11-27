@@ -218,6 +218,7 @@ pub fn app(state: Shared) -> Router {
         .route("/api/logs/export", get(api::export_logs))
         .route("/api/profiles", get(api::profiles))
         .route("/api/profile-templates", get(api::profile_templates))
+        .route("/api/strategy-models", get(api::strategy_models))
         .route("/api/models/discover", post(api::discover))
         .route("/api/playground/models", get(playground::models))
         .route("/api/playground/attachment", post(playground::attachment))

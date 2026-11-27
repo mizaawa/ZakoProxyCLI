@@ -21,7 +21,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { api, copy, errorMessage, number, time, tokenCount } from "./api";
-import type { Account, Group, Profile, ProfileTemplate, ProviderBinding, ProxyTestResult, RelayKey, KeyInfo } from "./api";
+import type { Account, Group, StrategyModel, ProviderBinding, ProxyTestResult, RelayKey, KeyInfo } from "./api";
+import { selectedStrategyModels, toggleStrategyModel } from "./strategyModels";
 import {
   Badge,
   Button,
@@ -154,34 +155,7 @@ function TableFooter({
   );
 }
 
-function profileDisplayModels(profile: Profile) {
-  // Keep both spellings in the API for exact model matching, while showing
-  // the single public model ID on this profile card.
-  return profile.id === "coldcoffee-deepseek-v4.1-flash-v1"
-    ? ["deepseek-4.1-flash"]
-    : profile.models;
-}
 
-function supportedModelsForGroup(groupId: string, accounts: Account[]) {
-  const supported = new Set<string>();
-  for (const account of accounts) {
-    if (
-      !account.enabled ||
-      !account.group_ids.includes(groupId) ||
-      (account.provider_binding &&
-        (account.provider_binding.status !== "active" || !account.has_api_key))
-    ) continue;
-    for (const model of account.models) {
-      if (model.trim()) supported.add(model);
-    }
-  }
-  return supported;
-}
-
-function profilesSupportedByGroup(groupId: string, accounts: Account[], profiles: Profile[]) {
-  const supported = supportedModelsForGroup(groupId, accounts);
-  return profiles.filter((profile) => profile.models.some((model) => supported.has(model)));
-}
 
 export function GroupsPage({ notify }: { notify: Notice }) {
   const cache = useResources();
@@ -443,7 +417,7 @@ export function AccountsPage({ notify }: { notify: Notice }) {
   const groups = useResource<Group[]>("/groups");
   const state = { accounts: accounts.data ?? none, groups: groups.data ?? none };
   const groupNames = useMemo(() => new Map(groups.data?.map((g) => [g.id, g.name])), [groups.data]);
-  const reload = () => cache.invalidate("/accounts", "/keys", "/profiles", "/stats", "/logs", "/playground/models");
+  const reload = () => cache.invalidate("/accounts", "/keys", "/profiles", "/strategy-models", "/stats", "/logs", "/playground/models");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [editing, setEditing] = useState<Account | "new" | null>(null);
@@ -1234,7 +1208,7 @@ export function KeysPage({ notify }: { notify: Notice }) {
   const groups = useResource<Group[]>("/groups");
   const state = { keys: keys.data ?? none, groups: groups.data ?? none };
   const groupNames = useMemo(() => new Map(groups.data?.map((g) => [g.id, g.name])), [groups.data]);
-  const reload = () => cache.invalidate("/keys", "/profiles", "/logs", "/stats", "/playground/models");
+  const reload = () => cache.invalidate("/keys", "/profiles", "/strategy-models", "/logs", "/stats", "/playground/models");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<RelayKey | "new" | null>(null);
   const [deleting, setDeleting] = useState<RelayKey | null>(null);
@@ -1492,135 +1466,66 @@ type KeyEditorProps = Actions & {
 };
 function KeyEditor(props: KeyEditorProps) {
   const groups = useResource<Group[]>("/groups");
-  const accounts = useResource<Account[]>("/accounts");
-  const profiles = useResource<Profile[]>("/profiles?summary=true");
-  const templates = useResource<ProfileTemplate[]>("/profile-templates");
-  if (!groups.data || !accounts.data || !profiles.data) return (
+  if (!groups.data) return (
     <Modal title={props.relayKey ? "编辑密钥" : "创建 API 密钥"} onClose={props.onClose} wide>
-      <ResourceStatus queries={[groups, accounts, profiles]} label="密钥选项" />
+      <ResourceStatus queries={[groups]} label="密钥选项" />
     </Modal>
   );
-  return <KeyForm {...props} state={{ groups: groups.data, accounts: accounts.data, profiles: profiles.data }} templatesQuery={templates} />;
+  return <KeyForm {...props} groups={groups.data} />;
 }
 
 function KeyForm({
   relayKey,
-  state,
-  templatesQuery,
+  groups,
   reload,
   notify,
   onClose,
   onCreated,
 }: KeyEditorProps & {
-  state: { groups: Group[]; accounts: Account[]; profiles: Profile[] };
-  templatesQuery: ReturnType<typeof useResource<ProfileTemplate[]>>;
+  groups: Group[];
 }) {
   const [name, setName] = useState(relayKey?.name || "");
   const [group, setGroup] = useState(
-    relayKey?.group_id || state.groups[0]?.id || "",
+    relayKey?.group_id || groups[0]?.id || "",
   );
   const [enabled, setEnabled] = useState(relayKey?.enabled ?? true);
-  const [profiles, setProfiles] = useState<string[]>(relayKey?.profile_ids || []);
+  const [models, setModels] = useState<string[] | null>(null);
   const [defaultStrategyEnabled, setDefaultStrategyEnabled] = useState(
     relayKey?.default_strategy_enabled ?? false,
   );
   const [profileSearch, setProfileSearch] = useState("");
-  const templates = templatesQuery.data ?? none;
-  const [templateError, setTemplateError] = useState("");
-  const templateLoading = !templatesQuery.data && templatesQuery.loading;
-  const [templateId, setTemplateId] = useState("");
-  const [templateModel, setTemplateModel] = useState("");
-  const [localProfiles, setLocalProfiles] = useState<Profile[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const availableProfiles = useMemo(() => {
-    const merged = new Map(state.profiles.map((profile) => [profile.id, profile]));
-    for (const profile of localProfiles) merged.set(profile.id, profile);
-    return [...merged.values()];
-  }, [state.profiles, localProfiles]);
-  const actualModels = useMemo(
-    () => [...supportedModelsForGroup(group, state.accounts)].sort(modelNameOrder.compare),
-    [group, state.accounts],
-  );
-  const selectedGroup = state.groups.find((item) => item.id === group);
-  const supportedProfiles = useMemo(
-    () => profilesSupportedByGroup(group, state.accounts, availableProfiles),
-    [group, state.accounts, availableProfiles],
-  );
-  const supportedProfileIds = useMemo(
-    () => new Set(supportedProfiles.map((profile) => profile.id)),
-    [supportedProfiles],
-  );
-  const selectedProfiles = profiles.filter((id) => supportedProfileIds.has(id));
-  const visibleProfiles = useMemo(() => {
+  const selectedGroup = groups.find((item) => item.id === group);
+  const optionsQuery = useResource<StrategyModel[]>(selectedGroup
+    ? "/strategy-models?" + new URLSearchParams({ group_id: group, ...(relayKey ? { key_id: relayKey.id } : {}) })
+    : null);
+  const options = optionsQuery.data ?? none;
+  const optionsReady = Boolean(optionsQuery.data && !optionsQuery.loading && !optionsQuery.error);
+  const selectedModels = selectedStrategyModels(options, models);
+  const visibleModels = useMemo(() => {
     const query = profileSearch.trim().toLowerCase();
-    const distinct = new Map<string, Profile>();
-    for (const profile of supportedProfiles) {
-      const equivalent = profile.metadata
-        ? JSON.stringify([profile.metadata.source_revision, profile.metadata.variant, [...profile.models].sort()])
-        : profile.id;
-      if (!distinct.has(equivalent) || profiles.includes(profile.id)) {
-        distinct.set(equivalent, profile);
-      }
-    }
-    return [...distinct.values()]
-      .sort(
-        (a, b) =>
-          modelNameOrder.compare(
-            profileDisplayModels(a).join(" · "),
-            profileDisplayModels(b).join(" · "),
-          ) ||
-          Number(Boolean(a.metadata)) - Number(Boolean(b.metadata)) ||
-          modelNameOrder.compare(a.id, b.id),
-      )
-      .filter((profile) =>
-        profile.name.toLowerCase().includes(query) || profile.models.some((model) => model.toLowerCase().includes(query)),
-      );
-  }, [supportedProfiles, profileSearch, profiles]);
+    return options.filter((item) => item.model.toLowerCase().includes(query))
+      .sort((a, b) => modelNameOrder.compare(a.model, b.model));
+  }, [options, profileSearch]);
 
   useEffect(() => {
-    setProfiles((current) => {
-      const supported = current.filter((id) => supportedProfileIds.has(id));
-      return supported.length === current.length ? current : supported;
-    });
-  }, [supportedProfileIds]);
+    if (optionsReady) setModels((current) => selectedStrategyModels(options, current));
+  }, [options, optionsReady]);
 
   function selectGroup(groupId: string) {
-    const supported = new Set(
-      profilesSupportedByGroup(groupId, state.accounts, availableProfiles).map((profile) => profile.id),
-    );
-    setProfiles((current) => current.filter((id) => supported.has(id)));
+    setModels(selectedModels);
     setGroup(groupId);
     setProfileSearch("");
-    setTemplateModel("");
-  }
-
-  function applyTemplate() {
-    const template = templates.find((item) => item.id === templateId);
-    if (!template || !actualModels.includes(templateModel)) return;
-    const encoded = [...new TextEncoder().encode(templateModel)]
-      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    if (encoded.length > 1024) { setTemplateError("模型 ID 过长，无法绑定策略"); return; }
-    const id = `coldcoffee@${template.id}@${encoded}`;
-    const profile: Profile = {
-      id, name: `${template.name} · ${templateModel}`, models: [templateModel],
-      model_family: "custom",
-      metadata: { source_url: template.source_url, source_revision: template.source_revision,
-        variant: template.id, validation: template.validation },
-    };
-    const overlapping = new Set(availableProfiles.filter((item) => item.models.includes(templateModel)).map((item) => item.id));
-    setLocalProfiles((current) => [...current.filter((item) => item.id !== id), profile]);
-    setProfiles((current) => [...current.filter((item) => !overlapping.has(item) && item !== id), id]);
-    setProfileSearch(templateModel);
-    setTemplateError("");
   }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!state.groups.some((item) => item.id === group)) {
+    if (!selectedGroup) {
       setError("请选择有效的所属分组");
       return;
     }
+    if (!optionsReady) return;
     setBusy(true);
     setError("");
     try {
@@ -1631,7 +1536,7 @@ function KeyForm({
           name: name.trim(),
           group_id: group,
           enabled,
-          profile_ids: selectedProfiles,
+          strategy_models: selectedModels,
           default_strategy_enabled: defaultStrategyEnabled,
         },
       );
@@ -1658,6 +1563,7 @@ function KeyForm({
         busy={busy}
         error={error}
         submit={relayKey ? "保存更改" : "创建密钥"}
+        submitDisabled={!selectedGroup || !optionsReady}
       >
         <Field label="密钥名称">
           <input
@@ -1670,40 +1576,19 @@ function KeyForm({
           />
         </Field>
         <div className="key-group-setting">
-          <GroupSelect value={group} groups={state.groups} onChange={selectGroup} disabled={busy} />
+          <GroupSelect value={group} groups={groups} onChange={selectGroup} disabled={busy || optionsQuery.loading} />
           {selectedGroup?.description?.trim() && (
             <p className="group-description" aria-label="分组简介">
               {selectedGroup.description}
             </p>
           )}
         </div>
-        {!state.groups.length && <ErrorBox message="请先创建分组" />}
-        <fieldset className="form-fieldset profile-fieldset" disabled={busy || !selectedGroup}>
+        {!groups.length && <ErrorBox message="请先创建分组" />}
+        {selectedGroup && <ResourceStatus label="模型策略" queries={[optionsQuery]} />}
+        <fieldset className="form-fieldset profile-fieldset" disabled={busy || !selectedGroup || !optionsReady}>
           <legend>
-            破甲策略<span>{selectedProfiles.length} 个已选</span>
+            破甲模型<span>{selectedModels.length} 个已选</span>
           </legend>
-          <details className="template-picker">
-            <summary>添加冷咖啡策略模板</summary>
-            <div className="template-picker-fields">
-              <Field label="实际模型">
-                <Select aria-label="模板绑定的实际模型" value={templateModel} onChange={(event) => setTemplateModel(event.target.value)}>
-                  <option value="">选择此分组的可用模型</option>
-                  {actualModels.map((model) => <option key={model} value={model}>{model}</option>)}
-                </Select>
-              </Field>
-              <Field label="策略模板">
-                <Select aria-label="冷咖啡策略模板" value={templateId} onChange={(event) => setTemplateId(event.target.value)} disabled={templateLoading}>
-                  <option value="">{templateLoading ? "正在加载模板…" : "选择策略模板"}</option>
-                  {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-                </Select>
-              </Field>
-              <Button type="button" onClick={applyTemplate} disabled={!actualModels.includes(templateModel) || !templateId || templateLoading}>应用模板</Button>
-            </div>
-            {!actualModels.length && <p className="field-hint">请先在此分组的已启用账号中配置模型。</p>}
-            <p className="field-hint">应用后替换该模型已选的策略，保存密钥后生效。</p>
-            <ResourceStatus label="模板" queries={[templatesQuery]} />
-            <ErrorBox message={templateError} />
-          </details>
           <div
             className="profile-search"
             onKeyDown={(event) => {
@@ -1714,58 +1599,46 @@ function KeyForm({
             <SearchInput
               value={profileSearch}
               onChange={setProfileSearch}
-              placeholder="搜索破甲策略"
+              placeholder="搜索模型"
             />
             <span className="profile-results" role="status">
-              显示 {visibleProfiles.length} / {supportedProfiles.length} 个策略
+              显示 {visibleModels.length} / {options.length} 个模型
             </span>
           </div>
           <div
             className="profile-options"
             role="region"
-            aria-label="破甲策略列表"
+            aria-label="破甲模型列表"
             tabIndex={0}
           >
-            {visibleProfiles.map((item) => (
-              <div className="profile-option" key={item.id}>
+            {visibleModels.map((item) => (
+              <div className="profile-option" key={item.model}>
                 <label className="profile-choice">
                   <input
                     type="checkbox"
-                    checked={selectedProfiles.includes(item.id)}
+                    aria-label={item.model}
+                    disabled={!item.profile_id}
+                    checked={selectedModels.includes(item.model)}
                     onChange={(event) => {
-                      const checked = event.target.checked;
-                      setProfiles((current) => {
-                        if (!checked) return current.filter((id) => id !== item.id);
-                        const overlapping = new Set(
-                          availableProfiles
-                            .filter((profile) =>
-                              profile.models.some((model) => item.models.includes(model)),
-                            )
-                            .map((profile) => profile.id),
-                        );
-                        return [
-                          ...current.filter((id) => supportedProfileIds.has(id) && !overlapping.has(id)),
-                          item.id,
-                        ];
-                      });
+                      setModels(toggleStrategyModel(options, selectedModels, item.model, event.target.checked));
                     }}
                   />
                   <span className="profile-checkbox" aria-hidden="true">
                     <Check size={13} strokeWidth={2.5} />
                   </span>
                   <span className="profile-description">
-                    <strong>{profileDisplayModels(item).join(" · ")}</strong>
-                    <small>{item.name}</small>
+                    <strong>{item.model}</strong>
+                    <small>{item.profile_id ? `来源：${item.profile_source ?? item.profile_name}` : "暂无匹配策略"}</small>
                   </span>
                 </label>
               </div>
             ))}
-            {visibleProfiles.length === 0 && (
+            {visibleModels.length === 0 && (!selectedGroup || optionsReady) && (
               <p className="profile-empty">
                 {!selectedGroup
                   ? "请先选择所属分组"
-                  : supportedProfiles.length === 0
-                    ? "此分组暂无支持的破甲策略"
+                  : options.length === 0
+                    ? "此分组暂无可用模型"
                     : "没有匹配的模型，试试其他关键词"}
               </p>
             )}

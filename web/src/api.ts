@@ -231,6 +231,14 @@ export type ProfileTemplate = {
   validation: string;
 };
 export type KeyInfo = Omit<RelayKey, "usage">;
+export type StrategyModel = {
+  model: string;
+  profile_id: string | null;
+  profile_name: string | null;
+  profile_source: string | null;
+  model_family: string | null;
+  selected: boolean;
+};
 export type Summary = Usage & {
   uncached_tokens: number;
   total_tokens: number;

@@ -16,7 +16,7 @@ RUN cargo build --locked --release
 FROM docker:28-cli AS docker-cli
 
 FROM debian:bookworm-slim AS image-base
-LABEL org.opencontainers.image.version="0.14.6"
+LABEL org.opencontainers.image.version="0.14.7"
 
 FROM image-base AS updater
 RUN apt-get update \

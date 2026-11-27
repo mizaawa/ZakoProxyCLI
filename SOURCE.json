@@ -1,6 +1,6 @@
 {
   "edition": "source-strategies",
-  "version": "0.14.6",
+  "version": "0.14.7",
   "base_commit": "6fb027ed578a83353880409f522cc633331e2159",
   "strategy_manifests": [
     "profiles/coldcoffee-full/SOURCE.json",
