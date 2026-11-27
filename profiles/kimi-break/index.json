@@ -1,0 +1,34 @@
+[
+  {
+    "id": "kimi-break-kimi-k3-v1",
+    "name": "kimi-break · kimi-k3",
+    "models": [
+      "kimi-k3"
+    ],
+    "model_family": "kimi"
+  },
+  {
+    "id": "kimi-break-kimi-k2.7-v1",
+    "name": "kimi-break · kimi-k2.7",
+    "models": [
+      "kimi-k2.7"
+    ],
+    "model_family": "kimi"
+  },
+  {
+    "id": "kimi-break-kimi-k2.7-code-v1",
+    "name": "kimi-break · kimi-k2.7-code",
+    "models": [
+      "kimi-k2.7-code"
+    ],
+    "model_family": "kimi"
+  },
+  {
+    "id": "kimi-break-kimi-k2.6-v1",
+    "name": "kimi-break · kimi-k2.6",
+    "models": [
+      "kimi-k2.6"
+    ],
+    "model_family": "kimi"
+  }
+]

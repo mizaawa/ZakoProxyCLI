@@ -1243,13 +1243,6 @@ mod tests {
         apply_instruction(&mut body, &group, "other").unwrap();
         assert_eq!(body, original);
         apply_instruction(&mut body, &group, &profile.models[0]).unwrap();
-        if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
-            assert_eq!(
-                body, original,
-                "selected profile must leave the request untouched"
-            );
-            return;
-        }
         assert_eq!(
             body["instructions"],
             format!("{}\n\nExisting", profile.instruction)
@@ -1278,10 +1271,6 @@ mod tests {
             let original = json!({"model":model,"instructions":"Existing instructions","input":[{"role":"user","content":"hello"}],"tools":[{"type":"function","name":"tool"}],"metadata":{"custom":true},"store":false});
             let mut body = original.clone();
             apply_instruction(&mut body, &group, model).unwrap();
-            if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
-                assert_eq!(body, original);
-                continue;
-            }
             assert_eq!(
                 body["instructions"],
                 format!("{}\n\nExisting instructions", expected.instruction)
@@ -1326,10 +1315,6 @@ mod tests {
         }
         let mut absent = json!({"model":"gpt-6-astra"});
         apply_instruction(&mut absent, &group, "gpt-6-astra").unwrap();
-        if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
-            assert!(absent.get("instructions").is_none());
-            return;
-        }
         assert_eq!(absent["instructions"], six.instruction);
         let mut empty = json!({"instructions":""});
         apply_instruction(&mut empty, &group, "gpt-6-astra").unwrap();
@@ -1817,6 +1802,157 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_strategy_is_really_forwarded_without_a_passphrase() {
+        use axum::{http::Uri, routing::post};
+        fn stream_fixture(path: &str) -> &'static str {
+            match path {
+                "/v1/messages" => {
+                    "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+                }
+                "/v1/chat/completions" => {
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n"
+                }
+                _ => {
+                    "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\"}\n\n"
+                }
+            }
+        }
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let observed = captured.clone();
+        let (endpoint, _server) = serve(axum::Router::new().fallback(post(
+            move |uri: Uri, Json(body): Json<Value>| {
+                let streaming = body["stream"] == true;
+                let fixture = stream_fixture(uri.path());
+                *observed.lock().unwrap() = Some((uri.path().to_owned(), body));
+                async move {
+                    if streaming {
+                        ([("content-type", "text/event-stream")], fixture).into_response()
+                    } else {
+                        Json(json!({"id":"ok","usage":{"input_tokens":1,"output_tokens":1}}))
+                            .into_response()
+                    }
+                }
+            },
+        )))
+        .await;
+        let (_dir, state) = fixture(&[endpoint]);
+        let mut cases: Vec<_> = profiles::all()
+            .iter()
+            .flat_map(|profile| {
+                profile
+                    .models
+                    .iter()
+                    .map(|model| (Some(profile.id.clone()), model.clone(), false))
+            })
+            .collect();
+        for template in profiles::templates() {
+            for model in ["provider/custom-model", "deepseek-test"] {
+                cases.push((
+                    Some(format!("coldcoffee@{}@{}", template.id, hex::encode(model))),
+                    model.into(),
+                    false,
+                ));
+            }
+        }
+        cases.push((None, "gpt-6.2-astra".into(), false));
+        cases.push((None, "unknown-model".into(), true));
+        for (selected, model, fallback) in cases {
+            state
+                .store
+                .update(|config| {
+                    config.keys[0].profile_ids = selected.iter().cloned().collect();
+                    config.keys[0].default_strategy_enabled = fallback;
+                    config.accounts[0].models = vec![model.clone()];
+                    config.accounts[0]
+                        .model_mappings
+                        .insert("chosen".into(), model.clone());
+                    config.accounts[0].protocols = vec![
+                        "responses".into(),
+                        "compact".into(),
+                        "chat".into(),
+                        "anthropic".into(),
+                    ];
+                    Ok(())
+                })
+                .unwrap();
+            let expected_instruction = selected
+                .as_ref()
+                .map(|id| profiles::find(id).unwrap().instruction.clone())
+                .or_else(|| fallback.then(|| profiles::DEFAULT_INSTRUCTION.to_owned()));
+            for (path, streaming) in [
+                ("/v1/responses", false),
+                ("/v1/responses/compact", false),
+                ("/v1/chat/completions", false),
+                ("/v1/messages", false),
+                ("/v1/responses", true),
+                ("/v1/chat/completions", true),
+                ("/v1/messages", true),
+            ] {
+                let messages = json!([
+                    {"role":"system","content":"Keep client system"},
+                    {"role":"user","content":[{"type":"text","text":"hello"},{"type":"image_url","image_url":{"url":"data:image/png;base64,fixture"}}]}
+                ]);
+                let mut original = json!({"model":"chosen","metadata":{"keep":true},"tools":[],"stream":streaming});
+                match path {
+                    "/v1/messages" => {
+                        original["system"] = json!([{"type":"text","text":"Keep system","cache_control":{"type":"ephemeral"}}]);
+                        original["messages"] = messages;
+                        original["max_tokens"] = json!(16);
+                    }
+                    "/v1/chat/completions" => original["messages"] = messages,
+                    _ => {
+                        original["instructions"] = json!("Keep instructions");
+                        original["input"] = messages;
+                    }
+                }
+                let response = call(state.clone(), path, original.clone()).await;
+                let status = response.status();
+                let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    status,
+                    StatusCode::OK,
+                    "{selected:?} {model} {path}: {}",
+                    String::from_utf8_lossy(&bytes)
+                );
+                if streaming {
+                    assert_eq!(
+                        bytes.as_ref(),
+                        stream_fixture(path).as_bytes(),
+                        "{selected:?} {path}"
+                    );
+                }
+                let (actual_path, actual) = captured.lock().unwrap().take().unwrap();
+                assert_eq!(actual_path, path);
+                let mut expected = original;
+                expected["model"] = json!(model);
+                if let Some(text) = &expected_instruction {
+                    match path {
+                        "/v1/messages" => expected["system"]
+                            .as_array_mut()
+                            .unwrap()
+                            .insert(0, json!({"type":"text","text":text})),
+                        "/v1/chat/completions" => expected["messages"]
+                            .as_array_mut()
+                            .unwrap()
+                            .insert(0, json!({"role":"system","content":text})),
+                        _ => {
+                            expected["instructions"] = json!(format!("{text}\n\nKeep instructions"))
+                        }
+                    }
+                    assert!(!text.trim().is_empty(), "{selected:?}");
+                    for marker in ["冷咖啡已激活", "QQ一群", "QQ四群", "冰美式", "Boot latch"]
+                    {
+                        assert!(!text.contains(marker), "{selected:?}: {marker}");
+                    }
+                }
+                assert_eq!(actual, expected, "{selected:?} {model} {path}");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn mapped_failover_rebuilds_actual_model_and_instruction_for_each_account() {
         use axum::routing::post;
         let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1871,9 +2007,7 @@ mod tests {
                 .unwrap();
             let mut expected = original.clone();
             expected["model"] = json!(actual);
-            if option_env!("ZAKO_DEPLOYMENT_FLAVOR") != Some("source-maintenance") {
-                expected["instructions"] = json!(format!("{}\n\nOriginal", profile.instruction));
-            }
+            expected["instructions"] = json!(format!("{}\n\nOriginal", profile.instruction));
             assert_eq!(*body, expected);
         }
         let logs = state.store.logs(0, store::now() + 10).unwrap();

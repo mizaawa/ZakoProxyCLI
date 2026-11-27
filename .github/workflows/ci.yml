@@ -94,13 +94,19 @@ jobs:
             sleep 2
           done
           curl --fail --silent --show-error http://127.0.0.1:1990/health \
-            | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"] == "0.14.5"'
+            | python3 -c 'import json,sys,tomllib; assert json.load(sys.stdin)["version"] == tomllib.load(open("Cargo.toml", "rb"))["package"]["version"]'
           test "$(docker exec zakoai-ci id -u)" = 10001
           test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:1990/v1/models)" = 401
           curl --fail --silent --show-error http://127.0.0.1:1990/api/setup \
             --header 'Content-Type: application/json' --header 'X-Console-Path: /' \
             --cookie-jar /tmp/zakoai-ci.cookies \
             --data '{"username":"ci-smoke","password":"x"}' > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:1990/api/profiles \
+            --header 'X-Console-Path: /' --cookie /tmp/zakoai-ci.cookies \
+            | python3 scripts/check-runtime-profiles.py
+          curl --fail --silent --show-error http://127.0.0.1:1990/api/profile-templates \
+            --header 'X-Console-Path: /' --cookie /tmp/zakoai-ci.cookies \
+            | python3 -c 'import json,sys; rows=json.load(sys.stdin); assert len(rows)==16; assert all(p["validation"]=="unverified" for p in rows)'
           curl --fail --silent --show-error http://127.0.0.1:1990/api/settings \
             --request PUT --header 'Content-Type: application/json' \
             --header 'X-Console-Path: /' --cookie /tmp/zakoai-ci.cookies \

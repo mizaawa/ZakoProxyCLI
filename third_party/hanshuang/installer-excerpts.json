@@ -1,0 +1,16 @@
+{
+  "source_selection": {
+    "lines": [
+      425,
+      437
+    ],
+    "text": "# 懒人包模式下提示词固定取包内 materials/AGENTS.md\n# 本构建不再随包分发提示词：卸载/还原模式跳过提示词解析。\nif ($isKitMode -and -not ($Uninstall -or $RestoreMemory)) {\n    $SourcePrompt = $kitPrompt\n}\nif ([string]::IsNullOrWhiteSpace($SourcePrompt) -and -not ($Uninstall -or $RestoreMemory)) {\n    $mdFiles = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter '*.md' -File | Sort-Object Name)\n    if ($mdFiles.Count -eq 0) {\n        throw \"No .md prompt file found in $PSScriptRoot\"\n    }\n    $SourcePrompt = $mdFiles[0].FullName\n}\n\n"
+  },
+  "read_and_write": {
+    "lines": [
+      610,
+      615
+    ],
+    "text": "# 整体覆盖：AGENTS.md 只保留注入的提示词\n$promptText = Read-Utf8 $SourcePrompt\n$injected = $markerBegin + \"`n\" + $promptText.TrimEnd(\"`r\", \"`n\") + \"`n\" + $markerEnd + \"`n\"\nWrite-Utf8NoBom $agentsMd $injected\nWrite-Host \"Injected prompt -> $agentsMd\"\n\n"
+  }
+}

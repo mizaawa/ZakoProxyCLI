@@ -1,7 +1,10 @@
-//! Source-managed container edition: keep saved model selections usable, without bundled instructions.
 use crate::store::Group;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::BTreeMap, sync::OnceLock};
+
+const COLDCOFFEE_REVISION: &str = "a30126e7c7d6c2ffe6b08f007cbc055d9b498f71";
+const DEEPSEEK_API_ADAPTER: &str = include_str!("../profiles/dsh-purge/api-adapter.md");
+pub const DEFAULT_INSTRUCTION: &str = include_str!("../profiles/default.md");
 
 #[derive(Clone, Serialize)]
 pub struct Profile {
@@ -9,14 +12,34 @@ pub struct Profile {
     pub name: String,
     pub models: Vec<String>,
     pub model_family: &'static str,
-    pub instruction: &'static str,
-    pub metadata: Option<()>,
+    pub instruction: String,
+    pub metadata: Option<ProfileMetadata>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
+pub struct ProfileMetadata {
+    pub source_url: String,
+    pub source_revision: String,
+    pub variant: String,
+    pub validation: &'static str,
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct ProfileTemplate {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing)]
+    source_path: String,
+    #[serde(default)]
+    pub source_url: String,
+    #[serde(default)]
+    pub source_revision: String,
+    #[serde(default)]
+    pub validation: String,
+    #[serde(skip)]
+    instruction: &'static str,
+    #[serde(skip)]
+    deepseek_instruction: String,
 }
 
 #[derive(Deserialize)]
@@ -24,67 +47,231 @@ struct Catalog {
     models: BTreeMap<String, Vec<String>>,
     templates: Vec<String>,
 }
+
 fn catalog() -> &'static Catalog {
     static DATA: OnceLock<Catalog> = OnceLock::new();
     DATA.get_or_init(|| {
-        serde_json::from_str(include_str!("relay-catalog.json"))
-            .expect("invalid relay model metadata")
+        serde_json::from_str(include_str!("relay-catalog.json")).expect("invalid relay catalog")
     })
 }
 
-fn descriptor(id: &str, models: Vec<String>) -> Profile {
-    let family = [
+fn template_body(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "codex" => include_str!("../profiles/coldcoffee-full/codex.md"),
+        "claude" => include_str!("../profiles/coldcoffee-full/claude.md"),
+        "grok" => include_str!("../profiles/coldcoffee-full/grok.md"),
+        "deepseek" => include_str!("../profiles/coldcoffee-full/deepseek.md"),
+        "glm53" => include_str!("../profiles/coldcoffee-full/glm53.md"),
+        "gemini" => include_str!("../profiles/coldcoffee-full/gemini.md"),
+        "doubao" => include_str!("../profiles/coldcoffee-full/doubao.md"),
+        "workbuddy" => include_str!("../profiles/coldcoffee-full/workbuddy.md"),
+        "cursor" => include_str!("../profiles/coldcoffee-full/cursor.md"),
+        "mimo" => include_str!("../profiles/coldcoffee-full/mimo.md"),
+        "kimi" => include_str!("../profiles/coldcoffee-full/kimi.md"),
+        "grok-bot" => include_str!("../profiles/coldcoffee-full/grok-bot.md"),
+        "claude-duet" => include_str!("../profiles/coldcoffee-full/claude-duet.md"),
+        "chatgpt-dot" => include_str!("../profiles/coldcoffee-full/chatgpt-dot.md"),
+        "meta-muse" => include_str!("../profiles/coldcoffee-full/meta-muse.md"),
+        "opencode" => include_str!("../profiles/coldcoffee-full/opencode.md"),
+        _ => return None,
+    })
+}
+
+fn usable(text: &str) -> bool {
+    !text.trim().is_empty()
+        && !text.contains("{{")
+        && text.contains("## API 默认启用")
+        && text.matches(" · LEAF-").count() == 80
+}
+
+pub fn templates() -> &'static [ProfileTemplate] {
+    static TEMPLATES: OnceLock<Vec<ProfileTemplate>> = OnceLock::new();
+    TEMPLATES.get_or_init(|| {
+        let items: Vec<ProfileTemplate> =
+            serde_json::from_str(include_str!("../profiles/coldcoffee-full/templates.json"))
+                .expect("invalid template catalog");
+        items
+            .into_iter()
+            .filter_map(|mut template| {
+                let text = template_body(&template.id)?;
+                if !catalog().templates.contains(&template.id) || !usable(text) {
+                    return None;
+                }
+                template.instruction = text;
+                template.deepseek_instruction = format!("{text}\n\n{DEEPSEEK_API_ADAPTER}");
+                template.source_url = format!(
+                    "https://github.com/3641397194-wq/gpt6-Astra/blob/{COLDCOFFEE_REVISION}/{}",
+                    template.source_path
+                );
+                template.source_revision = COLDCOFFEE_REVISION.into();
+                template.validation = "unverified".into();
+                Some(template)
+            })
+            .collect()
+    })
+}
+
+pub fn model_family(model: &str) -> Option<&'static str> {
+    [
         "gpt-5.6", "gpt-6.2", "gpt-6.1", "gpt-6", "claude", "grok", "gemini", "deepseek", "glm",
         "kimi",
     ]
     .into_iter()
     .find(|family| {
-        models[0] == *family
-            || models[0]
+        model == *family
+            || model
                 .strip_prefix(family)
                 .is_some_and(|s| s.starts_with('-'))
     })
-    .unwrap_or("custom");
-    Profile {
-        id: id.into(),
-        name: format!("{} · 透传", models[0]),
-        models,
-        model_family: family,
-        instruction: "",
-        metadata: None,
+}
+
+fn template_instruction(template: &'static ProfileTemplate, model: &str) -> &'static str {
+    if model_family(model) == Some("deepseek") {
+        &template.deepseek_instruction
+    } else {
+        template.instruction
     }
 }
+
+fn descriptor(id: &str, models: Vec<String>, template: &'static ProfileTemplate) -> Profile {
+    Profile {
+        id: id.into(),
+        name: format!("{} · {}", template.name, models[0]),
+        model_family: model_family(&models[0]).unwrap_or("custom"),
+        instruction: template_instruction(template, &models[0]).into(),
+        models,
+        metadata: Some(ProfileMetadata {
+            source_url: template.source_url.clone(),
+            source_revision: COLDCOFFEE_REVISION.into(),
+            variant: template.id.clone(),
+            validation: "unverified",
+        }),
+    }
+}
+
 pub fn all() -> &'static [Profile] {
     static PROFILES: OnceLock<Vec<Profile>> = OnceLock::new();
     PROFILES.get_or_init(|| {
         catalog()
             .models
             .iter()
-            .map(|(id, models)| descriptor(id, models.clone()))
-            .collect()
-    })
-}
-pub fn templates() -> &'static [ProfileTemplate] {
-    static TEMPLATES: OnceLock<Vec<ProfileTemplate>> = OnceLock::new();
-    TEMPLATES.get_or_init(|| {
-        catalog()
-            .templates
-            .iter()
-            .map(|id| ProfileTemplate {
-                id: id.clone(),
-                name: format!("{id} · 透传"),
+            .filter_map(|(id, models)| {
+                let family = model_family(models.first()?)?;
+                if !models
+                    .iter()
+                    .all(|model| model_family(model) == Some(family))
+                {
+                    return None;
+                }
+                if id.starts_with("gpt-")
+                    || id.starts_with("hanshuang-")
+                    || id.starts_with("kimi-break-")
+                    || id.starts_with("aijailbreak-")
+                    || id == "coldcoffee-deepseek-v4.1-flash-v1"
+                {
+                    return source_profile(id, models, family);
+                }
+                if !id.starts_with("coldcoffee-") {
+                    return None;
+                }
+                let seat = match family {
+                    "gpt-5.6" | "gpt-6" | "gpt-6.1" | "gpt-6.2" => "codex",
+                    "glm" => "glm53",
+                    other => other,
+                };
+                let template = templates().iter().find(|t| t.id == seat)?;
+                Some(descriptor(id, models.clone(), template))
             })
             .collect()
     })
 }
-pub fn find(id: &str) -> Option<Cow<'static, Profile>> {
-    if let Some(profile) = all().iter().find(|p| p.id == id) {
-        return Some(Cow::Borrowed(profile));
+
+fn source_profile(id: &str, models: &[String], family: &'static str) -> Option<Profile> {
+    let (name, body, source_url, revision, variant) = if id.starts_with("gpt-") {
+        #[derive(Deserialize)]
+        struct Entry {
+            id: String,
+            instruction: String,
+        }
+        let entries: Vec<Entry> = serde_json::from_str(include_str!(
+            "../third_party/gpt-instruct/profiles.legacy.json"
+        ))
+        .expect("invalid gpt-instruct snapshot");
+        let entry = entries.into_iter().find(|p| p.id == id)?;
+        (
+            "gpt-instruct",
+            entry.instruction,
+            "https://github.com/MDX-Tom/gpt-instruct".to_owned(),
+            "historical-snapshot",
+            "original-model-profile",
+        )
+    } else if id.starts_with("hanshuang-") || id == "coldcoffee-deepseek-v4.1-flash-v1" {
+        (
+            "寒霜 / Hanshuang", include_str!("../profiles/hanshuang/system.md").to_owned(),
+            "https://github.com/aimeoa/hanshuang-codex/tree/cf9c1537c2bd4ed8577ed6509ee665a39709d7d4".to_owned(),
+            "cf9c1537c2bd4ed8577ed6509ee665a39709d7d4", "deepseek-api",
+        )
+    } else if id.starts_with("kimi-break-") {
+        (
+            "kimi-break", include_str!("../profiles/kimi-break/system.md").to_owned(),
+            "https://github.com/YD-233/kimi-break/blob/c6a7f6dfffd17c45e60f6eb965f1d4bc169cd8f6/SYSTEM.md".to_owned(),
+            "c6a7f6dfffd17c45e60f6eb965f1d4bc169cd8f6", "kimi-api",
+        )
+    } else if id.starts_with("aijailbreak-") {
+        let (body, variant) = match family {
+            "glm" => (
+                include_str!("../profiles/ai-jailbreak/glm.md"),
+                "glm-5.3-identity-frame",
+            ),
+            "grok" => (
+                include_str!("../profiles/ai-jailbreak/grok.md"),
+                "grok-hybrid-frame",
+            ),
+            _ => return None,
+        };
+        (
+            "AI-Jailbreak",
+            body.to_owned(),
+            format!(
+                "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/{variant}.txt"
+            ),
+            "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+            variant,
+        )
+    } else {
+        return None;
+    };
+    if body.trim().is_empty() || body.contains("{{") || body.contains("${") {
+        return None;
     }
+    let instruction = if family == "deepseek" {
+        format!("{body}\n\n{DEEPSEEK_API_ADAPTER}")
+    } else {
+        body
+    };
+    Some(Profile {
+        id: id.into(),
+        name: format!("{name} · {}", models[0]),
+        models: models.to_vec(),
+        model_family: family,
+        instruction,
+        metadata: Some(ProfileMetadata {
+            source_url,
+            source_revision: revision.into(),
+            variant: variant.into(),
+            validation: "unverified",
+        }),
+    })
+}
+
+fn bound_template(id: &str) -> Option<(&'static ProfileTemplate, String)> {
     let (template, encoded) = id.strip_prefix("coldcoffee@")?.split_once('@')?;
-    if !catalog().templates.iter().any(|t| t == template)
-        || encoded.is_empty()
+    if encoded.is_empty()
         || encoded.len() > 1024
+        || !encoded.len().is_multiple_of(2)
+        || !encoded
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     {
         return None;
     }
@@ -92,40 +279,225 @@ pub fn find(id: &str) -> Option<Cow<'static, Profile>> {
     if model.trim() != model || model.chars().any(char::is_control) {
         return None;
     }
-    Some(Cow::Owned(descriptor(id, vec![model])))
+    Some((templates().iter().find(|t| t.id == template)?, model))
 }
-pub(crate) fn legacy_profile(_: &[String], _: &str) -> Option<&'static Profile> {
-    None
+
+pub fn find(id: &str) -> Option<Cow<'static, Profile>> {
+    if let Some(profile) = all().iter().find(|p| p.id == id) {
+        return Some(Cow::Borrowed(profile));
+    }
+    let (template, model) = bound_template(id)?;
+    Some(Cow::Owned(descriptor(id, vec![model], template)))
 }
-pub fn instruction(_: &Group, _: &str) -> Option<&'static str> {
-    None
+
+pub(crate) fn legacy_profile(models: &[String], text: &str) -> Option<&'static Profile> {
+    let same_models = |expected: &[String]| {
+        let mut expected: Vec<_> = expected.iter().collect();
+        let mut actual: Vec<_> = models.iter().collect();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        actual == expected
+    };
+    if let Some(profile) = all().iter().find(|p| {
+        same_models(&p.models)
+            && (p.instruction == text
+                || (p.model_family == "deepseek"
+                    && p.instruction
+                        .strip_suffix(DEEPSEEK_API_ADAPTER)
+                        .and_then(|s| s.strip_suffix("\n\n"))
+                        == Some(text)))
+    }) {
+        return Some(profile);
+    }
+    #[derive(Deserialize)]
+    struct Legacy {
+        id: String,
+        models: Vec<String>,
+        instruction: String,
+    }
+    static LEGACY: OnceLock<Vec<Legacy>> = OnceLock::new();
+    let old = LEGACY
+        .get_or_init(|| {
+            let mut entries: Vec<Legacy> =
+                serde_json::from_str(include_str!("../profiles/coldcoffee-full/legacy.json"))
+                    .unwrap();
+            entries.extend(
+                serde_json::from_str::<Vec<Legacy>>(include_str!(
+                    "../third_party/gpt-instruct/profiles.legacy.json"
+                ))
+                .unwrap(),
+            );
+            entries
+        })
+        .iter()
+        .find(|p| same_models(&p.models) && p.instruction == text)?;
+    all().iter().find(|p| p.id == old.id)
+}
+
+pub fn instruction(group: &Group, model: &str) -> Option<&'static str> {
+    group
+        .profile_ids
+        .iter()
+        .find_map(|id| {
+            if let Some(p) = all().iter().find(|p| p.id == *id) {
+                return p
+                    .models
+                    .iter()
+                    .any(|m| m == model)
+                    .then_some(p.instruction.as_str());
+            }
+            let (template, bound_model) = bound_template(id)?;
+            (bound_model == model).then(|| template_instruction(template, model))
+        })
+        .or_else(|| {
+            group
+                .default_strategy_enabled
+                .then_some(DEFAULT_INSTRUCTION)
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn metadata_is_compatible_but_never_injects_into_requests() {
-        let group = Group {
-            profile_ids: all().iter().map(|p| p.id.clone()).collect(),
-            default_strategy_enabled: true,
-            ..Group::default()
-        };
+    fn every_catalog_entry_has_a_complete_automatically_active_body() {
+        assert_eq!(all().len(), catalog().models.len());
+        assert_eq!(templates().len(), catalog().templates.len());
         for p in all() {
-            assert!(find(&p.id).is_some());
+            assert!(!p.instruction.trim().is_empty(), "{}", p.id);
+            let group = Group {
+                profile_ids: vec![p.id.clone()],
+                ..Default::default()
+            };
             for model in &p.models {
-                assert!(instruction(&group, model).is_none());
+                assert_eq!(instruction(&group, model), Some(p.instruction.as_str()));
+                assert!(instruction(&group, &format!("{model}-unlisted")).is_none());
+                assert!(instruction(&Group::default(), model).is_none());
             }
+            assert!(p.metadata.is_some());
         }
         for t in templates() {
-            let id = format!("coldcoffee@{}@{}", t.id, hex::encode("example-model"));
-            assert!(find(&id).is_some());
-            let selected = Group {
-                profile_ids: vec![id],
-                ..group.clone()
-            };
-            assert!(instruction(&selected, "example-model").is_none());
+            for model in ["provider/custom-model", "deepseek-test"] {
+                let id = format!("coldcoffee@{}@{}", t.id, hex::encode(model));
+                let p = find(&id).unwrap();
+                let group = Group {
+                    profile_ids: vec![id],
+                    ..Default::default()
+                };
+                assert_eq!(instruction(&group, model), Some(p.instruction.as_str()));
+                assert!(usable(&p.instruction));
+                for marker in [
+                    "{{",
+                    "激活页",
+                    "Boot latch",
+                    "cold coffee",
+                    "启动词",
+                    "冷咖啡已激活",
+                    "QQ一群",
+                    "QQ二群",
+                    "QQ三群",
+                    "QQ四群",
+                    "Telegram",
+                    "冰美式",
+                    "无限制模式开启",
+                    "我可以为你做",
+                ] {
+                    assert!(!p.instruction.contains(marker), "{}: {marker}", t.id);
+                }
+            }
         }
-        assert!(instruction(&group, "unknown").is_none());
+    }
+
+    #[test]
+    fn distinct_sources_keep_their_own_bodies_and_provenance() {
+        for p in all() {
+            let meta = p.metadata.as_ref().unwrap();
+            let (source, marker) = if p.id.starts_with("gpt-") {
+                ("MDX-Tom/gpt-instruct", "")
+            } else if p.id.starts_with("hanshuang-") || p.id == "coldcoffee-deepseek-v4.1-flash-v1"
+            {
+                ("aimeoa/hanshuang-codex", "# 寒霜 / Hanshuang")
+            } else if p.id.starts_with("kimi-break-") {
+                ("YD-233/kimi-break", "# ZakoAI · kimi-break API 内联适配")
+            } else if p.id.starts_with("aijailbreak-") {
+                (
+                    "Baimuking/AI-Jailbreak",
+                    "# ZakoAI / AI-Jailbreak lightweight API profile",
+                )
+            } else {
+                assert!(usable(&p.instruction), "{}", p.id);
+                ("3641397194-wq/gpt6-Astra", "## API 默认启用")
+            };
+            assert!(meta.source_url.contains(source), "{}", p.id);
+            assert!(p.instruction.contains(marker), "{}", p.id);
+            if source != "3641397194-wq/gpt6-Astra" {
+                assert!(!p.instruction.contains("CHA-ROUTE"), "{}", p.id);
+            }
+        }
+        assert!(DEFAULT_INSTRUCTION.contains("# ZakoAI API task execution profile"));
+    }
+
+    #[test]
+    fn invalid_bindings_and_empty_templates_are_not_advertised() {
+        for encoded in ["", "a", "2F", "ff", "206120", "0a"] {
+            assert!(find(&format!("coldcoffee@codex@{encoded}")).is_none());
+        }
+        assert!(find("coldcoffee@missing@61").is_none());
+        assert!(!usable(""));
+        assert!(!usable("{{ROUTER}}"));
+    }
+
+    #[test]
+    fn fallback_is_explicit_and_exact_profile_takes_precedence() {
+        let p = &all()[0];
+        let group = Group {
+            profile_ids: vec![p.id.clone()],
+            default_strategy_enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            instruction(&group, &p.models[0]),
+            Some(p.instruction.as_str())
+        );
+        assert_eq!(instruction(&group, "unknown"), Some(DEFAULT_INSTRUCTION));
+        assert!(instruction(&Group::default(), "unknown").is_none());
+    }
+
+    #[test]
+    fn legacy_migration_preserves_aliases_and_accepts_adapter_free_deepseek() {
+        let profile = all()
+            .iter()
+            .find(|p| p.id == "coldcoffee-deepseek-v4.1-flash-v1")
+            .unwrap();
+        let models: Vec<_> = profile.models.iter().rev().cloned().collect();
+        for text in [
+            profile.instruction.as_str(),
+            include_str!("../profiles/hanshuang/system.md"),
+        ] {
+            assert_eq!(legacy_profile(&models, text).unwrap().id, profile.id);
+            let group: Group = serde_json::from_value(serde_json::json!({
+                "name": "Migrated", "models": models, "instruction": text
+            }))
+            .unwrap();
+            assert_eq!(group.profile_ids, vec![profile.id.clone()]);
+        }
+        let duplicates = vec![models[0].clone(); models.len()];
+        assert!(legacy_profile(&duplicates, &profile.instruction).is_none());
+        assert!(legacy_profile(&models, "unrelated custom instructions").is_none());
+        assert!(legacy_profile(&[], "").is_none());
+    }
+
+    #[test]
+    fn explicit_empty_selection_does_not_reactivate_legacy_profiles() {
+        let profile = &all()[0];
+        let group: Group = serde_json::from_value(serde_json::json!({
+            "name": "Disabled", "models": profile.models,
+            "instruction": profile.instruction, "profile_ids": []
+        }))
+        .unwrap();
+        assert!(group.profile_ids.is_empty());
+        assert!(!group.default_strategy_enabled);
+        assert!(instruction(&group, &profile.models[0]).is_none());
     }
 }

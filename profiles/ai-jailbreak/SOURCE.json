@@ -1,0 +1,54 @@
+{
+  "repository": "https://github.com/Baimuking/AI-Jailbreak",
+  "revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Baimuking",
+  "inputs": {
+    "glm-5.3-identity-frame.txt": "6a2a253e1978387edf1968d8eceed1cc3b15cd803f043b17ba7dbc37f3eb14a4",
+    "grok-hybrid-frame.txt": "8e69995e58b38158b7d63228bcd9f270f93024cf3ea40bed9f031bb88256cfcd",
+    "LICENSE": "14a57c4a751a8a0a50293dbe7dc4c08a5244b35b7ff16124c1db0712225d6d62"
+  },
+  "input_paths": {
+    "glm-5.3-identity-frame.txt": "docs/prompts/glm-5.3-identity-frame.txt",
+    "grok-hybrid-frame.txt": "docs/prompts/grok-hybrid-frame.txt",
+    "LICENSE": "LICENSE"
+  },
+  "adaptation": {
+    "kind": "curated English API adaptation, not a verbatim upstream prompt",
+    "retained": [
+      "direct technical conclusions",
+      "complete deliverables",
+      "explicit uncertainty",
+      "concise output",
+      "context-grounded continuation"
+    ],
+    "changed": [
+      "use only actual API context and tools",
+      "client format and completeness override generic length limits",
+      "remove fixed local identity and blanket authorization claims",
+      "remove instruction-hierarchy override claims and unconditional phrase bans",
+      "use supplied context instead of assumed cross-request memory"
+    ],
+    "selection": "six opt-in profiles; existing groups and profiles retain their selection and text",
+    "validation": "unverified; no upstream or local model-effectiveness measurements",
+    "deferred": {
+      "deepseek": "Candidate forces rewritten-request output and stable first-turn structure; retain current API-compatible profiles.",
+      "gpt-claude-gemini-kimi": "No exact-version evidence to replace current model-specific profiles.",
+      "universal": "Retain existing opt-in default until task and protocol regressions are measured."
+    }
+  },
+  "outputs": {
+    "glm.md": {
+      "bytes": 2114,
+      "sha256": "9502503e60a2cd400904d337ed5b963e2c8aff9c72023f36ee2cae315f7271d4"
+    },
+    "grok.md": {
+      "bytes": 2014,
+      "sha256": "e8c6b26621cb853a6cbf0e6a68631cd12da9ab1c2dcae11cbc7d3e7aa1c29533"
+    },
+    "index.json": {
+      "bytes": 2934,
+      "sha256": "9dcb9771045a83137916bab351c1357e0935acfb63ed58e2a58227d1225b5deb"
+    }
+  }
+}

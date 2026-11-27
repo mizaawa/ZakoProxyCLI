@@ -138,8 +138,7 @@ pub struct UpdateStatus {
 }
 fn response(state: AgentStatus, configured: bool, error: Option<String>) -> UpdateStatus {
     let current = env!("CARGO_PKG_VERSION");
-    let available = option_env!("ZAKO_DEPLOYMENT_FLAVOR") != Some("source-maintenance")
-        && state.latest.as_ref().is_some_and(|r| r.version != current);
+    let available = state.latest.as_ref().is_some_and(|r| r.version != current);
     UpdateStatus {
         current_version: current,
         configured,
@@ -1337,12 +1336,6 @@ async fn agent_start(
 ) -> ApiResult<AgentStatus> {
     agent_auth(&agent, &headers)?;
     parse_tag(&input.tag).ok_or_else(|| bad("Invalid release tag"))?;
-    if option_env!("ZAKO_DEPLOYMENT_FLAVOR") == Some("source-maintenance") {
-        return Err(ApiError(
-            StatusCode::CONFLICT,
-            "此镜像从项目源码部署，请在原项目目录运行部署脚本更新两个服务".into(),
-        ));
-    }
     {
         let state = agent.state.lock().await;
         if state.job.as_ref().is_some_and(Job::active) {
@@ -1438,10 +1431,7 @@ mod tests {
             None,
         );
         assert!(!status.configured);
-        assert_eq!(
-            status.update_available,
-            option_env!("ZAKO_DEPLOYMENT_FLAVOR") != Some("source-maintenance")
-        );
+        assert!(status.update_available);
         assert_eq!(status.latest.unwrap().tag, "v999.0.0");
         task.abort();
     }

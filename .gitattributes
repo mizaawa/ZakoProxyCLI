@@ -1,0 +1,23 @@
+profiles/coldcoffee/* text eol=lf
+third_party/coldcoffee.LICENSE text eol=lf whitespace=-blank-at-eof
+profiles/kimi-break/* text eol=lf
+third_party/kimi-break/* text eol=lf whitespace=-blank-at-eof
+profiles/hanshuang/* text eol=lf
+third_party/hanshuang/* text eol=lf whitespace=-blank-at-eof
+scripts/import-hanshuang.py text eol=lf
+profiles/default.md text eol=lf
+profiles/default.SOURCE.json text eol=lf
+profiles/dsh-purge/* text eol=lf
+third_party/dsh-purge/* text eol=lf whitespace=-blank-at-eof
+profiles/ai-jailbreak/* text eol=lf
+third_party/ai-jailbreak/* text eol=lf whitespace=-blank-at-eof
+scripts/import-ai-jailbreak.py text eol=lf
+profiles/index.json text eol=lf
+profiles/coldcoffee-gpt/* text eol=lf
+third_party/coldcoffee-gpt/** text eol=lf whitespace=-blank-at-eof
+third_party/gpt-instruct/*.json text eol=lf
+scripts/import-coldcoffee-gpt.py text eol=lf
+profiles/coldcoffee-full/* text eol=lf
+third_party/coldcoffee-full/** text eol=lf whitespace=-blank-at-eof
+scripts/import-coldcoffee-full.py text eol=lf
+scripts/test_coldcoffee_full.py text eol=lf

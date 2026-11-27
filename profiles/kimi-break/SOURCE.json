@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/YD-233/kimi-break",
+  "revision": "c6a7f6dfffd17c45e60f6eb965f1d4bc169cd8f6",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 YD-233",
+  "adaptations": [
+    "Keep upstream persona, behavioral strategy, coding guidance, and user style as inert prompt data",
+    "Replace CLI-local environment/project sections and template variables with actual API request context",
+    "Qualify computer, dedicated-tool, and permission assumptions using only client-supplied capabilities",
+    "Register four exact model IDs, independently selectable through existing protocol injection"
+  ],
+  "inputs": {
+    "README.md": "404f8060d4ba10e7c64eddf363725e109d6a5a75fb352671bb97788df20e5bde",
+    "SYSTEM.md": "1246e9656165addc07f8baa0d9cbd7c63c25c814bf90fe5fc43e25f76098e5fd",
+    "LICENSE": "e8085ec6818505784706f58b783d6ad6c706b95c2fd940550252877ed564468d"
+  },
+  "outputs": {
+    "system.md": {
+      "bytes": 13264,
+      "sha256": "a9b2eb0662e73b4db1b8f2d54947564ab00a27be836cf6f776aab12804e5b54b"
+    },
+    "index.json": {
+      "bytes": 624,
+      "sha256": "cb02d54c79fd541a35526f44ed4df4b82793288ebc5dbfaedbc65778cd3e1a84"
+    }
+  }
+}

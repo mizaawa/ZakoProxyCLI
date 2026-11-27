@@ -1,0 +1,33 @@
+{
+  "repository": "https://github.com/YuJunZhiXue/dsh-purge",
+  "revision": "6c1d638d1bdcc45ede50fc30249c753d58122a51",
+  "version": "1.1.71",
+  "license": {
+    "spdx": "MIT",
+    "copyright_notice": "Copyright (c) 2026 小杨",
+    "license_file": "../../third_party/dsh-purge/LICENSE"
+  },
+  "adaptation": {
+    "target": "DeepSeek profiles in a stateless API relay",
+    "composed_for_model_family": "deepseek",
+    "imported_concepts": [
+      "Request-time prompt composition",
+      "Use of actual runtime context for continuity",
+      "Bounded handling of request attempts and observed outcomes"
+    ],
+    "excluded_host_features": [
+      "Harness package patching",
+      "Local approval, sandbox, and filesystem behavior changes",
+      "Desktop hooks, UI, and asar lifecycle",
+      "Refusal-bypass prompt text and fabricated local capabilities"
+    ],
+    "source_code_copied": false,
+    "legacy_profile_ids_preserved": true
+  },
+  "outputs": {
+    "api-adapter.md": {
+      "bytes": 1125,
+      "sha256": "fe7c78628831e327c18db565748eb8565eeb82af34ffdd68ea0aaf519df5e17f"
+    }
+  }
+}

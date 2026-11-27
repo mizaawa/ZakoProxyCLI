@@ -127,6 +127,49 @@ async fn administrator_passwords_have_no_length_limit_but_cannot_be_empty() {
 }
 
 #[tokio::test]
+async fn recreated_administrator_accepts_long_setup_and_one_character_change() {
+    let (dir, state) = fixture();
+    let long = "a".repeat(4096);
+    let cookie = setup(&state, &long).await;
+    let (status, _, _) = request(
+        &state,
+        "POST",
+        "/api/password",
+        Some(json!({"current_password":long,"new_password":"z","confirm_password":"z"})),
+        &cookie,
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = request(&state, "GET", "/api/settings", None, &cookie, "/").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    drop(state);
+    let reopened = new_app(dir.path(), dir.path().join("web")).unwrap();
+    let (status, _, _) = request(
+        &reopened,
+        "POST",
+        "/api/login",
+        Some(json!({"username":"admin","password":"z"})),
+        "",
+        "/",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Simulate the existing offline recovery path without touching operator data.
+    reopened
+        .store
+        .update(|config| {
+            config.username.clear();
+            config.password_hash.clear();
+            Ok(())
+        })
+        .unwrap();
+    let cookie = setup(&reopened, "q").await;
+    let (status, _, _) = request(&reopened, "GET", "/api/settings", None, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn security_entry_can_change_disable_and_accept_trailing_slashes() {
     let (dir, state) = fixture();
     let web = dir.path().join("web");

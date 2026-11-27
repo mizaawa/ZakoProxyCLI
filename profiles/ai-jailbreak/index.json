@@ -1,0 +1,86 @@
+[
+  {
+    "id": "aijailbreak-glm-5.3-v1",
+    "name": "AI-Jailbreak / glm-5.3 / lightweight API v1",
+    "models": [
+      "glm-5.3"
+    ],
+    "model_family": "glm",
+    "metadata": {
+      "source_url": "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/glm-5.3-identity-frame.txt",
+      "source_revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+      "variant": "lightweight-api",
+      "validation": "unverified"
+    }
+  },
+  {
+    "id": "aijailbreak-glm-5.3-flash-v1",
+    "name": "AI-Jailbreak / glm-5.3-flash / lightweight API v1",
+    "models": [
+      "glm-5.3-flash"
+    ],
+    "model_family": "glm",
+    "metadata": {
+      "source_url": "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/glm-5.3-identity-frame.txt",
+      "source_revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+      "variant": "lightweight-api",
+      "validation": "unverified"
+    }
+  },
+  {
+    "id": "aijailbreak-glm-5.3-air-v1",
+    "name": "AI-Jailbreak / glm-5.3-air / lightweight API v1",
+    "models": [
+      "glm-5.3-air"
+    ],
+    "model_family": "glm",
+    "metadata": {
+      "source_url": "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/glm-5.3-identity-frame.txt",
+      "source_revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+      "variant": "lightweight-api",
+      "validation": "unverified"
+    }
+  },
+  {
+    "id": "aijailbreak-grok-4.7-v1",
+    "name": "AI-Jailbreak / grok-4.7 / lightweight API v1",
+    "models": [
+      "grok-4.7"
+    ],
+    "model_family": "grok",
+    "metadata": {
+      "source_url": "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/grok-hybrid-frame.txt",
+      "source_revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+      "variant": "lightweight-api",
+      "validation": "unverified"
+    }
+  },
+  {
+    "id": "aijailbreak-grok-4.6-v1",
+    "name": "AI-Jailbreak / grok-4.6 / lightweight API v1",
+    "models": [
+      "grok-4.6"
+    ],
+    "model_family": "grok",
+    "metadata": {
+      "source_url": "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/grok-hybrid-frame.txt",
+      "source_revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+      "variant": "lightweight-api",
+      "validation": "unverified"
+    }
+  },
+  {
+    "id": "aijailbreak-grok-build-v1",
+    "name": "AI-Jailbreak / grok-build / lightweight API v1",
+    "models": [
+      "grok-build"
+    ],
+    "model_family": "grok",
+    "metadata": {
+      "source_url": "https://github.com/Baimuking/AI-Jailbreak/blob/8c278b10f47f305546a52d7a0ce044d2c643dc71/docs/prompts/grok-hybrid-frame.txt",
+      "source_revision": "8c278b10f47f305546a52d7a0ce044d2c643dc71",
+      "variant": "lightweight-api",
+      "validation": "unverified"
+    }
+  }
+]

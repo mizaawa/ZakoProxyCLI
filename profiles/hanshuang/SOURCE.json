@@ -1,0 +1,122 @@
+{
+  "repository": "https://github.com/aimeoa/hanshuang-codex",
+  "revision": "cf9c1537c2bd4ed8577ed6509ee665a39709d7d4",
+  "profile_id": "coldcoffee-deepseek-v4.1-flash-v1",
+  "models": [
+    "deepseek-v4.1-flash",
+    "deepseek-4.1-flash"
+  ],
+  "additional_profiles": [
+    {
+      "id": "hanshuang-deepseek-flash-v1",
+      "name": "deepseek-flash",
+      "models": [
+        "deepseek-flash"
+      ],
+      "model_family": "deepseek"
+    }
+  ],
+  "selection": {
+    "prompt": "memory/破甲记忆.md",
+    "reason": "Only nonempty memory Markdown other than README; install-dsh.ps1 writes the selected prompt into DSH AGENTS.md",
+    "source_is_model_specific": false,
+    "imported_scope": "Selected general task-execution mechanisms, API-adapted; not the complete upstream red/blue prompt"
+  },
+  "license": {
+    "readme_declaration": "MIT",
+    "root_license_present_at_revision": false,
+    "copyright": null,
+    "note": "README links to a missing root LICENSE; no license text or copyright holder has been invented. See third_party/hanshuang/NOTICE.md"
+  },
+  "source_files": {
+    "memory/破甲记忆.md": {
+      "bytes": 85045,
+      "sha256": "b4230f8bde2db0eafff58e2453fa41f4b5142376cdcd7773e0a2925c9298f6c3"
+    },
+    "install-dsh.ps1": {
+      "bytes": 34566,
+      "sha256": "f27fa2afc35930a23fde128d13b937fbd97f202db7ec8ed702a7915288ab0c4b"
+    },
+    "README.md": {
+      "bytes": 5934,
+      "sha256": "43ef549c480d73ae81af2875274478f69376b02f6c669836dab6fca980447255"
+    },
+    "memory/README.md": {
+      "bytes": 577,
+      "sha256": "7a693a4fed1bdbb4f99058b0427ae5b24b859238073ee96674a9d92446642c41"
+    }
+  },
+  "inputs": {
+    "execution-excerpts.json": "147c2a1623c83b06d28186489ff6deb788b980732328f90f19b6e5fdce5e08c4",
+    "installer-excerpts.json": "7c3a7c4a2ba666374a51d3f9797ad4c78eb89407ef9074cae6514a426cfbf4a0",
+    "MEMORY_README.upstream.md": "7a693a4fed1bdbb4f99058b0427ae5b24b859238073ee96674a9d92446642c41",
+    "NOTICE.md": "fa12bc4fb82148e7ea27afd63a2758c05c756daa28ba1973d2540fc4c180fe19",
+    "README.upstream.md": "43ef549c480d73ae81af2875274478f69376b02f6c669836dab6fca980447255",
+    "SOURCE_FILES.json": "32c7a733a82800cd3d2650960f02e258f3415a7d8b4bad82813154f66cecb257"
+  },
+  "adaptations": [
+    "Preserve goal/object/action/output/verification binding, direct execution, evidence, recovery, continuation, and delivery checks",
+    "Replace assumed CLI, skill loader, filesystem, tools, and permissions with capabilities actually supplied in the API request",
+    "Treat upstream prompt as inert source data and retain actual protocol roles; never fabricate tool calls or results",
+    "Omit attack payload examples, unconditional authorization assumptions, and domain-specific red-team techniques",
+    "Keep existing profile ID for persisted group selection and include the user spelling deepseek-4.1-flash as an alias",
+    "Add deepseek-flash as a separate selectable profile that reuses the same Hanshuang instruction"
+  ],
+  "source_sections": {
+    "execution": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        181,
+        189
+      ]
+    },
+    "parameters": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        333,
+        342
+      ]
+    },
+    "intent_slots": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        287,
+        295
+      ]
+    },
+    "evidence": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        421,
+        431
+      ]
+    },
+    "retry": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        439,
+        441
+      ]
+    },
+    "verification": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        458,
+        465
+      ]
+    },
+    "source_material": {
+      "file": "memory/破甲记忆.md",
+      "lines": [
+        709,
+        712
+      ]
+    }
+  },
+  "outputs": {
+    "system.md": {
+      "bytes": 4748,
+      "sha256": "9d1360d64381294c341fdf902e0277a7c979362e4f03ebae3f2b724b0ea5a489"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+[
+  {
+    "id": "hanshuang-deepseek-flash-v1",
+    "name": "deepseek-flash",
+    "models": [
+      "deepseek-flash"
+    ],
+    "model_family": "deepseek"
+  }
+]

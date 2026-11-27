@@ -1,4 +1,15 @@
 {
-  "edition": "source-maintenance",
-  "source_commit": "647d5a9d2f995e2d21696f072745049eb916ab52"
+  "edition": "source-strategies",
+  "version": "0.14.6",
+  "base_commit": "6fb027ed578a83353880409f522cc633331e2159",
+  "strategy_manifests": [
+    "profiles/coldcoffee-full/SOURCE.json",
+    "profiles/hanshuang/SOURCE.json",
+    "profiles/kimi-break/SOURCE.json",
+    "profiles/ai-jailbreak/SOURCE.json",
+    "profiles/default.SOURCE.json",
+    "profiles/dsh-purge/SOURCE.json",
+    "third_party/gpt-instruct/SOURCE.json"
+  ],
+  "validation": "Model effectiveness remains unverified; request injection is covered by local mock-upstream tests."
 }

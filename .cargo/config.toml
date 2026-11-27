@@ -1,2 +1,0 @@
-[env]
-ZAKO_DEPLOYMENT_FLAVOR = { value = "source-maintenance", force = true }

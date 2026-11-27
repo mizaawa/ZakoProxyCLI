@@ -1,0 +1,19 @@
+{
+  "repository": "https://github.com/MDX-Tom/gpt-instruct",
+  "revision": null,
+  "provenance": "Historical project snapshot; exact upstream revision has not been established. No current upstream HEAD is attributed to these bytes.",
+  "recovered_from_project_commit": "b7fc93b",
+  "license_file": "../gpt-instruct.LICENSE",
+  "files": {
+    "profiles.legacy.json": {
+      "bytes": 21445,
+      "sha256": "27d9b5ded63900d9d74810bb57b6cf2eb601cf749ded4daf703f622e3272b79c"
+    }
+  },
+  "profile_ids": [
+    "gpt-5.6-sol-v45",
+    "gpt-6-astra-v2-rc1",
+    "gpt-6.1-sol-v1-rc2"
+  ],
+  "validation": "Source integrity and local request forwarding only; live model effectiveness is unverified."
+}

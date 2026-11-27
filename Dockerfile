@@ -9,16 +9,14 @@ FROM rust:1.99-bookworm AS backend
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-# The maintenance image ships model identifiers only, never inline strategy bodies.
-COPY packaging/relay-profiles.rs ./src/profiles.rs
-COPY packaging/relay-catalog.json ./src/relay-catalog.json
-ENV ZAKO_DEPLOYMENT_FLAVOR=source-maintenance
+COPY profiles/ ./profiles/
+COPY third_party/gpt-instruct/ ./third_party/gpt-instruct/
 RUN cargo build --locked --release
 
 FROM docker:28-cli AS docker-cli
 
 FROM debian:bookworm-slim AS image-base
-LABEL org.opencontainers.image.version="0.14.5"
+LABEL org.opencontainers.image.version="0.14.6"
 
 FROM image-base AS updater
 RUN apt-get update \
@@ -51,6 +49,8 @@ COPY --from=frontend --chown=zako:zako /build/web/dist/assets/third-party-licens
 COPY --chown=zako:zako LICENSE third_party/gpt-instruct.LICENSE third_party/coldcoffee.LICENSE /app/licenses/
 COPY --chown=zako:zako third_party/coldcoffee-gpt/LICENSE /app/licenses/coldcoffee-gpt.LICENSE
 COPY --chown=zako:zako third_party/coldcoffee-full/LICENSE /app/licenses/coldcoffee-full.LICENSE
+COPY --chown=zako:zako third_party/dsh-purge/LICENSE /app/licenses/dsh-purge.LICENSE
+COPY --chown=zako:zako third_party/dsh-purge/NOTICE.md /app/licenses/dsh-purge.NOTICE.md
 COPY --chown=zako:zako third_party/kimi-break/LICENSE /app/licenses/kimi-break.LICENSE
 COPY --chown=zako:zako third_party/ai-jailbreak/LICENSE /app/licenses/ai-jailbreak.LICENSE
 COPY --chown=zako:zako third_party/ai-jailbreak/NOTICE.md /app/licenses/ai-jailbreak.NOTICE.md
